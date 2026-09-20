@@ -4,13 +4,17 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.company_research import CompanyResearch
 from app.models.competitor import Competitor
+from app.models.competitor_research import CompetitorResearch
 from app.models.research_run import ResearchRun
 from app.schemas.competitor import DiscoveredCompetitorResponse, DiscoveryRequest
 from app.schemas.research import (
+    CompetitorResearchResponse,
     CompanyResearchResponse,
     ResearchCreate,
     ResearchResponse,
     ResearchDiscoverResponse,
+    ResearchCompetitorRequest,
+    ResearchCompetitorResponse,
     ResearchUnderstandResponse,
 )
 from app.services import research as research_service
@@ -53,6 +57,22 @@ def competitor_to_discovery_response(competitor: Competitor) -> DiscoveredCompet
         domain=competitor.domain,
         created_at=competitor.created_at,
         updated_at=competitor.updated_at,
+    )
+
+
+def competitor_research_to_response(
+    competitor_research: CompetitorResearch,
+) -> CompetitorResearchResponse:
+    return CompetitorResearchResponse(
+        id=competitor_research.id,
+        competitor_id=competitor_research.competitor_id,
+        description=competitor_research.description,
+        industry=competitor_research.industry,
+        products_services=competitor_research.products_services,
+        target_customers=competitor_research.target_customers,
+        business_model=competitor_research.business_model,
+        created_at=competitor_research.created_at,
+        updated_at=competitor_research.updated_at,
     )
 
 
@@ -119,4 +139,29 @@ def discover_research(
     return ResearchDiscoverResponse(
         research=to_response(research_run),
         competitors=[competitor_to_discovery_response(competitor) for competitor in competitors],
+    )
+
+
+@router.post("/{research_id}/research", response_model=ResearchCompetitorResponse)
+def research_competitors(
+    research_id: int,
+    payload: ResearchCompetitorRequest,
+    db: Session = Depends(get_db),
+) -> ResearchCompetitorResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    try:
+        competitor_research = research_service.research_competitors(
+            db,
+            research_run,
+            payload.competitor_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return ResearchCompetitorResponse(
+        research=to_response(research_run),
+        competitor_research=[
+            competitor_research_to_response(item) for item in competitor_research
+        ],
     )

@@ -1,3 +1,8 @@
+from app.db.session import SessionLocal
+from app.models.competitor import Competitor
+from app.models.research_run import ResearchRun
+
+
 def test_create_research_run(client):
     response = client.post("/api/research", json={"company": "notion.so"})
 
@@ -275,6 +280,141 @@ def test_discover_nonexistent_research_run_returns_not_found(client):
     response = client.post(
         "/api/research/999999/discover",
         json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
+    )
+
+    assert response.status_code == 404
+
+
+def test_research_competitors_creates_foundations(client):
+    research = resolve_and_understand(client)
+    discovered = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={
+            "competitors": [
+                {"name": "Slack", "domain": "slack.com"},
+                {"name": "Evernote", "domain": "evernote.com"},
+            ]
+        },
+    ).json()
+    competitor_ids = [item["id"] for item in discovered["competitors"]]
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/research",
+        json={"competitor_ids": competitor_ids},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["research"]["research_id"] == research["research_id"]
+    assert body["research"]["status"] == "resolving"
+    assert [item["competitor_id"] for item in body["competitor_research"]] == competitor_ids
+    assert all(item["description"] is None for item in body["competitor_research"])
+    assert all(item["industry"] is None for item in body["competitor_research"])
+    assert all(item["products_services"] is None for item in body["competitor_research"])
+    assert all(item["target_customers"] is None for item in body["competitor_research"])
+    assert all(item["business_model"] is None for item in body["competitor_research"])
+
+
+def test_research_competitors_deduplicates_ids(client):
+    research = resolve_and_understand(client)
+    discovered = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
+    ).json()
+    competitor_id = discovered["competitors"][0]["id"]
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/research",
+        json={"competitor_ids": [competitor_id, competitor_id]},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["competitor_research"]) == 1
+
+
+def test_research_competitors_reuses_existing_foundation(client):
+    research = resolve_and_understand(client)
+    discovered = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
+    ).json()
+    competitor_id = discovered["competitors"][0]["id"]
+    endpoint = f"/api/research/{research['research_id']}/research"
+
+    first = client.post(endpoint, json={"competitor_ids": [competitor_id]}).json()
+    second = client.post(endpoint, json={"competitor_ids": [competitor_id]}).json()
+
+    assert second["competitor_research"][0]["id"] == first["competitor_research"][0]["id"]
+
+
+def test_research_competitors_rejects_empty_ids(client):
+    research = resolve_and_understand(client)
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/research",
+        json={"competitor_ids": []},
+    )
+
+    assert response.status_code == 422
+
+
+def test_research_competitors_rejects_nonexistent_competitor(client):
+    research = resolve_and_understand(client)
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/research",
+        json={"competitor_ids": [999999]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_research_competitors_rejects_competitor_from_another_run(client):
+    first_research = resolve_and_understand(client, "Notion")
+    second_research = resolve_and_understand(client, "Acme")
+    discovered = client.post(
+        f"/api/research/{first_research['research_id']}/discover",
+        json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
+    ).json()
+    competitor_id = discovered["competitors"][0]["id"]
+
+    response = client.post(
+        f"/api/research/{second_research['research_id']}/research",
+        json={"competitor_ids": [competitor_id]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_research_competitors_rejects_missing_company_research(client):
+    research = client.post("/api/research", json={"company": "Notion"}).json()
+    client.post(f"/api/research/{research['research_id']}/resolve")
+
+    db = SessionLocal()
+    try:
+        competitor = Competitor(
+            research_run_id=research["research_id"],
+            name="Slack",
+            domain="slack.com",
+        )
+        db.add(competitor)
+        db.commit()
+        db.refresh(competitor)
+    finally:
+        db.close()
+
+    discovered = client.post(
+        f"/api/research/{research['research_id']}/research",
+        json={"competitor_ids": [competitor.id]},
+    )
+
+    assert discovered.status_code == 422
+
+
+def test_research_competitors_rejects_missing_research_run(client):
+    response = client.post(
+        "/api/research/999999/research",
+        json={"competitor_ids": [1]},
     )
 
     assert response.status_code == 404

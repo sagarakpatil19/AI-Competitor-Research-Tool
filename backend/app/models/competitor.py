@@ -25,3 +25,8 @@ class Competitor(Base):
 
     project: Mapped["Project"] = relationship(back_populates="competitors")
     research_run: Mapped["ResearchRun | None"] = relationship(back_populates="competitors")
+    research: Mapped["CompetitorResearch | None"] = relationship(
+        back_populates="competitor",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )

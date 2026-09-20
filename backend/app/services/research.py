@@ -5,9 +5,11 @@ from sqlalchemy.orm import Session
 
 from app.models.company_research import CompanyResearch
 from app.models.competitor import Competitor
+from app.models.competitor_research import CompetitorResearch
 from app.models.research_run import ResearchInputType, ResearchRun, ResearchRunStatus
 from app.repositories import company_research as company_research_repository
 from app.repositories import competitors as competitor_repository
+from app.repositories import competitor_research as competitor_research_repository
 from app.repositories import research_runs as research_run_repository
 
 
@@ -144,3 +146,36 @@ def discover_competitors(db: Session, research_run: ResearchRun, candidates) -> 
         competitors.append(competitor)
 
     return competitors
+
+
+def research_competitors(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_ids: list[int],
+) -> list[CompetitorResearch]:
+    if research_run.input_type is None or research_run.status != ResearchRunStatus.RESOLVING:
+        raise ValueError("Research input must be resolved before competitor research")
+
+    if company_research_repository.get_by_research_run_id(db, research_run.id) is None:
+        raise ValueError("Company understanding must be completed before competitor research")
+
+    unique_ids = list(dict.fromkeys(competitor_ids))
+    competitors = competitor_repository.get_by_ids(db, unique_ids)
+    competitors_by_id = {competitor.id: competitor for competitor in competitors}
+    if len(competitors_by_id) != len(unique_ids):
+        raise ValueError("All competitor IDs must exist")
+    if any(competitor.research_run_id != research_run.id for competitor in competitors):
+        raise ValueError("All competitors must belong to the research run")
+
+    existing = competitor_research_repository.get_by_competitor_ids(db, unique_ids)
+    existing_by_competitor_id = {item.competitor_id: item for item in existing}
+    results: list[CompetitorResearch] = []
+    for competitor_id in unique_ids:
+        foundation = existing_by_competitor_id.get(competitor_id)
+        if foundation is None:
+            foundation = competitor_research_repository.create_competitor_research(
+                db,
+                CompetitorResearch(competitor_id=competitor_id),
+            )
+        results.append(foundation)
+    return results

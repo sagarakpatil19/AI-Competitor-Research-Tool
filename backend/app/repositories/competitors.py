@@ -51,3 +51,7 @@ def get_research_competitor_by_domain(
             Competitor.domain == domain,
         )
     )
+
+
+def get_by_ids(db: Session, competitor_ids: list[int]) -> list[Competitor]:
+    return list(db.scalars(select(Competitor).where(Competitor.id.in_(competitor_ids))).all())

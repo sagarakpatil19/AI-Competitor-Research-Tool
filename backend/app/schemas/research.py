@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.models.research_run import ResearchInputType, ResearchRunStatus
 from app.schemas.competitor import DiscoveredCompetitorResponse
+from app.schemas.competitor_research import CompetitorResearchResponse
 
 
 class ResearchCreate(BaseModel):
@@ -41,3 +42,12 @@ class ResearchUnderstandResponse(BaseModel):
 class ResearchDiscoverResponse(BaseModel):
     research: ResearchResponse
     competitors: list[DiscoveredCompetitorResponse]
+
+
+class ResearchCompetitorRequest(BaseModel):
+    competitor_ids: list[int] = Field(min_length=1)
+
+
+class ResearchCompetitorResponse(BaseModel):
+    research: ResearchResponse
+    competitor_research: list[CompetitorResearchResponse]
