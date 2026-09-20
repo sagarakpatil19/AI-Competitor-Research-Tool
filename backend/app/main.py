@@ -5,6 +5,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.companies import router as companies_router
 from app.api.routes.competitors import competitor_router, project_router as competitors_router
 from app.api.routes.projects import router as projects_router
+from app.api.routes.research import router as research_router
 from app.core.config import settings
 from app import models  # noqa: F401
 
@@ -24,6 +25,7 @@ app.add_middleware(
 
 app.include_router(health_router, prefix="/api")
 app.include_router(projects_router, prefix="/api")
+app.include_router(research_router, prefix="/api")
 app.include_router(companies_router, prefix="/api")
 app.include_router(competitors_router, prefix="/api")
 app.include_router(competitor_router, prefix="/api")
