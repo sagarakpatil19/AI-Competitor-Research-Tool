@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.models.research_run import ResearchRunStatus
+from app.models.research_run import ResearchInputType, ResearchRunStatus
 
 
 class ResearchCreate(BaseModel):
@@ -12,6 +12,8 @@ class ResearchCreate(BaseModel):
 class ResearchResponse(BaseModel):
     research_id: int
     input_value: str
+    input_type: ResearchInputType | None
+    resolved_domain: str | None
     status: ResearchRunStatus
     created_at: datetime
     updated_at: datetime

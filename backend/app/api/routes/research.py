@@ -13,6 +13,8 @@ def to_response(research_run: ResearchRun) -> ResearchResponse:
     return ResearchResponse(
         research_id=research_run.id,
         input_value=research_run.input_value,
+        input_type=research_run.input_type,
+        resolved_domain=research_run.resolved_domain,
         status=research_run.status,
         created_at=research_run.created_at,
         updated_at=research_run.updated_at,
@@ -35,4 +37,16 @@ def get_research(research_id: int, db: Session = Depends(get_db)) -> ResearchRes
     research_run = research_service.get_research_run(db, research_id)
     if research_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    return to_response(research_run)
+
+
+@router.post("/{research_id}/resolve", response_model=ResearchResponse)
+def resolve_research(research_id: int, db: Session = Depends(get_db)) -> ResearchResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    try:
+        research_run = research_service.resolve_research_run(db, research_run)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return to_response(research_run)

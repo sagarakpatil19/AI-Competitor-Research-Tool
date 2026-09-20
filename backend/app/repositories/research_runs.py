@@ -12,3 +12,9 @@ def create_research_run(db: Session, research_run: ResearchRun) -> ResearchRun:
     db.commit()
     db.refresh(research_run)
     return research_run
+
+
+def save_research_run(db: Session, research_run: ResearchRun) -> ResearchRun:
+    db.commit()
+    db.refresh(research_run)
+    return research_run

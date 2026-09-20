@@ -18,11 +18,27 @@ class ResearchRunStatus(str, Enum):
     FAILED = "failed"
 
 
+class ResearchInputType(str, Enum):
+    URL = "url"
+    DOMAIN = "domain"
+    COMPANY_NAME = "company_name"
+
+
 class ResearchRun(Base):
     __tablename__ = "research_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     input_value: Mapped[str] = mapped_column(String(2048), nullable=False)
+    input_type: Mapped[ResearchInputType | None] = mapped_column(
+        SqlEnum(
+            ResearchInputType,
+            name="research_input_type",
+            native_enum=True,
+            values_callable=lambda enum_type: [member.value for member in enum_type],
+        ),
+        nullable=True,
+    )
+    resolved_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[ResearchRunStatus] = mapped_column(
         SqlEnum(
             ResearchRunStatus,

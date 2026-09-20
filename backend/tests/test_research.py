@@ -6,6 +6,8 @@ def test_create_research_run(client):
     assert body["research_id"]
     assert body["input_value"] == "notion.so"
     assert body["status"] == "submitted"
+    assert body["input_type"] is None
+    assert body["resolved_domain"] is None
     assert body["created_at"]
     assert body["updated_at"]
 
@@ -36,3 +38,57 @@ def test_new_research_run_starts_submitted(client):
     response = client.post("/api/research", json={"company": "Example Company"})
 
     assert response.json()["status"] == "submitted"
+
+
+def test_resolve_url(client):
+    created = client.post(
+        "/api/research",
+        json={"company": "https://www.notion.so/product"},
+    ).json()
+
+    response = client.post(f"/api/research/{created['research_id']}/resolve")
+
+    assert response.status_code == 200
+    assert response.json()["input_type"] == "url"
+    assert response.json()["resolved_domain"] == "notion.so"
+    assert response.json()["status"] == "resolving"
+    assert response.json()["input_value"] == "https://www.notion.so/product"
+
+
+def test_resolve_domain(client):
+    created = client.post("/api/research", json={"company": "notion.so"}).json()
+
+    response = client.post(f"/api/research/{created['research_id']}/resolve")
+
+    assert response.status_code == 200
+    assert response.json()["input_type"] == "domain"
+    assert response.json()["resolved_domain"] == "notion.so"
+    assert response.json()["status"] == "resolving"
+
+
+def test_resolve_www_url(client):
+    created = client.post(
+        "/api/research",
+        json={"company": "https://www.notion.so"},
+    ).json()
+
+    response = client.post(f"/api/research/{created['research_id']}/resolve")
+
+    assert response.json()["resolved_domain"] == "notion.so"
+
+
+def test_resolve_company_name(client):
+    created = client.post("/api/research", json={"company": "Notion"}).json()
+
+    response = client.post(f"/api/research/{created['research_id']}/resolve")
+
+    assert response.status_code == 200
+    assert response.json()["input_type"] == "company_name"
+    assert response.json()["resolved_domain"] is None
+    assert response.json()["status"] == "resolving"
+
+
+def test_resolve_nonexistent_research_run_returns_not_found(client):
+    response = client.post("/api/research/999999/resolve")
+
+    assert response.status_code == 404
