@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from app.models.research_run import ResearchInputType, ResearchRunStatus
 from app.schemas.competitor import DiscoveredCompetitorResponse
 from app.schemas.competitor_research import CompetitorResearchResponse
+from app.schemas.competitor_evidence import CompetitorEvidenceResponse
 
 
 class ResearchCreate(BaseModel):
@@ -56,3 +57,13 @@ class ResearchCompetitorResponse(BaseModel):
 class ResearchCompetitorUpdateResponse(BaseModel):
     research: ResearchResponse
     competitor_research: CompetitorResearchResponse
+
+
+class ResearchEvidenceResponse(BaseModel):
+    research: ResearchResponse
+    evidence: CompetitorEvidenceResponse
+
+
+class ResearchEvidenceListResponse(BaseModel):
+    research: ResearchResponse
+    evidence: list[CompetitorEvidenceResponse]

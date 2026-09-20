@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.models.company_research import CompanyResearch
 from app.models.competitor import Competitor
+from app.models.competitor_evidence import CompetitorEvidence
 from app.models.competitor_research import CompetitorResearch
 from app.models.research_run import ResearchInputType, ResearchRun, ResearchRunStatus
 from app.repositories import company_research as company_research_repository
 from app.repositories import competitors as competitor_repository
 from app.repositories import competitor_research as competitor_research_repository
+from app.repositories import competitor_evidence as competitor_evidence_repository
 from app.repositories import research_runs as research_run_repository
 
 
@@ -213,3 +215,58 @@ def update_competitor_research(
         setattr(competitor_research, field, value)
 
     return competitor_research_repository.save_competitor_research(db, competitor_research)
+
+
+def _require_competitor_research(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_id: int,
+) -> CompetitorResearch:
+    if company_research_repository.get_by_research_run_id(db, research_run.id) is None:
+        raise ValueError("Company understanding must be completed before evidence collection")
+
+    competitor = competitor_repository.get_competitor(db, competitor_id)
+    if competitor is None:
+        raise ValueError("Competitor not found")
+    if competitor.research_run_id != research_run.id:
+        raise ValueError("Competitor must belong to the research run")
+
+    competitor_research = competitor_research_repository.get_by_competitor_id(db, competitor_id)
+    if competitor_research is None:
+        raise ValueError("Competitor research foundation not found")
+    return competitor_research
+
+
+def create_competitor_evidence(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_id: int,
+    evidence_data: dict,
+) -> CompetitorEvidence:
+    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    evidence_data["source_url"] = str(evidence_data["source_url"])
+    for field in ("source_title", "source_type", "publisher"):
+        value = evidence_data.get(field)
+        if value is not None:
+            normalized_value = value.strip()
+            if not normalized_value:
+                raise ValueError(f"{field} must not be empty")
+            evidence_data[field] = normalized_value
+
+    evidence = CompetitorEvidence(
+        competitor_research_id=competitor_research.id,
+        **evidence_data,
+    )
+    return competitor_evidence_repository.create_evidence(db, evidence)
+
+
+def list_competitor_evidence(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_id: int,
+) -> list[CompetitorEvidence]:
+    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    return competitor_evidence_repository.list_by_competitor_research_id(
+        db,
+        competitor_research.id,
+    )

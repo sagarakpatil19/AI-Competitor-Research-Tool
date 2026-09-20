@@ -591,3 +591,181 @@ def test_update_competitor_research_rejects_empty_update(client):
     )
 
     assert response.status_code == 422
+
+
+def create_evidence_foundation(client, company="Notion"):
+    research, competitor_id, foundation = create_competitor_research_foundation(client, company)
+    endpoint = f"/api/research/{research['research_id']}/competitors/{competitor_id}/research/evidence"
+    return research, competitor_id, foundation, endpoint
+
+
+def test_create_evidence_persists_source_and_content(client):
+    research, competitor_id, foundation, endpoint = create_evidence_foundation(client)
+    payload = {
+        "source_url": "https://example.com/article",
+        "source_title": "Example Article",
+        "source_type": "article",
+        "publisher": "Example Publisher",
+        "published_at": "2026-09-20T12:00:00Z",
+        "retrieved_at": "2026-09-21T12:00:00Z",
+        "content": "Observed source content.",
+        "content_excerpt": "Relevant excerpt.",
+    }
+
+    response = client.post(endpoint, json=payload)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["research"]["research_id"] == research["research_id"]
+    assert body["research"]["status"] == "resolving"
+    assert set(body) == {"research", "evidence"}
+    evidence = body["evidence"]
+    assert evidence["competitor_research_id"] == foundation["id"]
+    assert evidence["source_url"] == "https://example.com/article"
+    assert evidence["source_title"] == "Example Article"
+    assert evidence["source_type"] == "article"
+    assert evidence["publisher"] == "Example Publisher"
+    assert evidence["content"] == "Observed source content."
+    assert evidence["content_excerpt"] == "Relevant excerpt."
+    assert evidence["id"]
+    assert evidence["created_at"]
+    assert evidence["updated_at"]
+
+
+def test_list_evidence_returns_records_for_competitor_research(client):
+    research, _, foundation, endpoint = create_evidence_foundation(client)
+    client.post(endpoint, json={"source_url": "https://example.com/one"})
+    client.post(endpoint, json={"source_url": "https://example.com/two"})
+
+    response = client.get(endpoint)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["research"]["research_id"] == research["research_id"]
+    assert body["research"]["status"] == "resolving"
+    assert len(body["evidence"]) == 2
+    assert all(item["competitor_research_id"] == foundation["id"] for item in body["evidence"])
+
+
+def test_evidence_metadata_whitespace_is_trimmed(client):
+    _, _, _, endpoint = create_evidence_foundation(client)
+
+    response = client.post(
+        endpoint,
+        json={
+            "source_url": "https://example.com/article",
+            "source_title": "  Example Title  ",
+            "source_type": "  article  ",
+            "publisher": "  Example Publisher  ",
+        },
+    )
+
+    assert response.status_code == 201
+    evidence = response.json()["evidence"]
+    assert evidence["source_title"] == "Example Title"
+    assert evidence["source_type"] == "article"
+    assert evidence["publisher"] == "Example Publisher"
+
+
+def test_evidence_rejects_empty_or_invalid_source_url(client):
+    _, _, _, endpoint = create_evidence_foundation(client)
+
+    empty_response = client.post(endpoint, json={"source_url": "   "})
+    invalid_response = client.post(endpoint, json={"source_url": "ftp://example.com/file"})
+
+    assert empty_response.status_code == 422
+    assert invalid_response.status_code == 422
+
+
+def test_evidence_requires_source_url(client):
+    _, _, _, endpoint = create_evidence_foundation(client)
+
+    response = client.post(endpoint, json={"source_title": "Missing URL"})
+
+    assert response.status_code == 422
+
+
+def test_evidence_rejects_empty_optional_metadata(client):
+    _, _, _, endpoint = create_evidence_foundation(client)
+
+    response = client.post(
+        endpoint,
+        json={"source_url": "https://example.com", "publisher": "   "},
+    )
+
+    assert response.status_code == 422
+
+
+def test_evidence_rejects_missing_research_run(client):
+    response = client.post(
+        "/api/research/999999/competitors/1/research/evidence",
+        json={"source_url": "https://example.com"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_evidence_rejects_missing_company_research(client):
+    research = client.post("/api/research", json={"company": "Notion"}).json()
+    client.post(f"/api/research/{research['research_id']}/resolve")
+    db = SessionLocal()
+    try:
+        competitor = Competitor(
+            research_run_id=research["research_id"],
+            name="Slack",
+            domain="slack.com",
+        )
+        db.add(competitor)
+        db.commit()
+        db.refresh(competitor)
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/competitors/{competitor.id}/research/evidence",
+        json={"source_url": "https://example.com"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_evidence_rejects_missing_competitor(client):
+    research, _, _, _ = create_evidence_foundation(client)
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/competitors/999999/research/evidence",
+        json={"source_url": "https://example.com"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_evidence_rejects_cross_run_competitor(client):
+    first_research, first_competitor_id, _, _ = create_evidence_foundation(client, "Notion")
+    second_research, _, _, second_endpoint = create_evidence_foundation(client, "Acme")
+
+    cross_run_endpoint = (
+        f"/api/research/{second_research['research_id']}/competitors/"
+        f"{first_competitor_id}/research/evidence"
+    )
+    response = client.post(cross_run_endpoint, json={"source_url": "https://example.com"})
+
+    assert first_research["research_id"] != second_research["research_id"]
+    assert second_endpoint != cross_run_endpoint
+    assert response.status_code == 422
+
+
+def test_evidence_rejects_missing_competitor_research(client):
+    research = resolve_and_understand(client)
+    discovered = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
+    ).json()
+    competitor_id = discovered["competitors"][0]["id"]
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/competitors/{competitor_id}/research/evidence",
+        json={"source_url": "https://example.com"},
+    )
+
+    assert response.status_code == 422

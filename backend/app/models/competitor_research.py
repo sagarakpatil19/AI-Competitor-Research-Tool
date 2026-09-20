@@ -24,3 +24,7 @@ class CompetitorResearch(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     competitor: Mapped["Competitor"] = relationship(back_populates="research")
+    evidence: Mapped[list["CompetitorEvidence"]] = relationship(
+        back_populates="competitor_research",
+        cascade="all, delete-orphan",
+    )

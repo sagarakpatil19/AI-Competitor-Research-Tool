@@ -4,9 +4,11 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.company_research import CompanyResearch
 from app.models.competitor import Competitor
+from app.models.competitor_evidence import CompetitorEvidence
 from app.models.competitor_research import CompetitorResearch
 from app.models.research_run import ResearchRun
 from app.schemas.competitor import DiscoveredCompetitorResponse, DiscoveryRequest
+from app.schemas.competitor_evidence import CompetitorEvidenceCreate, CompetitorEvidenceResponse
 from app.schemas.competitor_research import CompetitorResearchResponse, CompetitorResearchUpdate
 from app.schemas.research import (
     CompanyResearchResponse,
@@ -16,6 +18,8 @@ from app.schemas.research import (
     ResearchCompetitorRequest,
     ResearchCompetitorResponse,
     ResearchCompetitorUpdateResponse,
+    ResearchEvidenceListResponse,
+    ResearchEvidenceResponse,
     ResearchUnderstandResponse,
 )
 from app.services import research as research_service
@@ -74,6 +78,25 @@ def competitor_research_to_response(
         business_model=competitor_research.business_model,
         created_at=competitor_research.created_at,
         updated_at=competitor_research.updated_at,
+    )
+
+
+def competitor_evidence_to_response(
+    evidence: CompetitorEvidence,
+) -> CompetitorEvidenceResponse:
+    return CompetitorEvidenceResponse(
+        id=evidence.id,
+        competitor_research_id=evidence.competitor_research_id,
+        source_url=evidence.source_url,
+        source_title=evidence.source_title,
+        source_type=evidence.source_type,
+        publisher=evidence.publisher,
+        published_at=evidence.published_at,
+        retrieved_at=evidence.retrieved_at,
+        content=evidence.content,
+        content_excerpt=evidence.content_excerpt,
+        created_at=evidence.created_at,
+        updated_at=evidence.updated_at,
     )
 
 
@@ -193,4 +216,55 @@ def update_research_competitor(
     return ResearchCompetitorUpdateResponse(
         research=to_response(research_run),
         competitor_research=competitor_research_to_response(competitor_research),
+    )
+
+
+@router.post(
+    "/{research_id}/competitors/{competitor_id}/research/evidence",
+    response_model=ResearchEvidenceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_research_evidence(
+    research_id: int,
+    competitor_id: int,
+    payload: CompetitorEvidenceCreate,
+    db: Session = Depends(get_db),
+) -> ResearchEvidenceResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    try:
+        evidence = research_service.create_competitor_evidence(
+            db,
+            research_run,
+            competitor_id,
+            payload.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return ResearchEvidenceResponse(
+        research=to_response(research_run),
+        evidence=competitor_evidence_to_response(evidence),
+    )
+
+
+@router.get(
+    "/{research_id}/competitors/{competitor_id}/research/evidence",
+    response_model=ResearchEvidenceListResponse,
+)
+def list_research_evidence(
+    research_id: int,
+    competitor_id: int,
+    db: Session = Depends(get_db),
+) -> ResearchEvidenceListResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    try:
+        evidence = research_service.list_competitor_evidence(db, research_run, competitor_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return ResearchEvidenceListResponse(
+        research=to_response(research_run),
+        evidence=[competitor_evidence_to_response(item) for item in evidence],
     )
