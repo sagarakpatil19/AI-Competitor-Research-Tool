@@ -4,8 +4,10 @@ from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 
 from app.models.company_research import CompanyResearch
+from app.models.competitor import Competitor
 from app.models.research_run import ResearchInputType, ResearchRun, ResearchRunStatus
 from app.repositories import company_research as company_research_repository
+from app.repositories import competitors as competitor_repository
 from app.repositories import research_runs as research_run_repository
 
 
@@ -96,3 +98,49 @@ def understand_company(db: Session, research_run: ResearchRun) -> CompanyResearc
         company_research = company_research_repository.save_company_research(db, company_research)
 
     return company_research
+
+
+def discover_competitors(db: Session, research_run: ResearchRun, candidates) -> list[Competitor]:
+    if research_run.status != ResearchRunStatus.RESOLVING:
+        raise ValueError("Company understanding must be completed before competitor discovery")
+
+    if company_research_repository.get_by_research_run_id(db, research_run.id) is None:
+        raise ValueError("Company understanding must be completed before competitor discovery")
+
+    normalized_candidates: list[tuple[str, str]] = []
+    seen_domains: set[str] = set()
+    for candidate in candidates:
+        name = candidate.name.strip()
+        domain = candidate.domain.strip().rstrip(".")
+        if not name:
+            raise ValueError("Competitor name must not be empty")
+        if not domain or not DOMAIN_PATTERN.fullmatch(domain):
+            raise ValueError("Competitor domain must be a valid domain")
+        normalized_domain = _normalize_domain(domain)
+        if normalized_domain in seen_domains:
+            continue
+        seen_domains.add(normalized_domain)
+        normalized_candidates.append((name, normalized_domain))
+
+    if not normalized_candidates:
+        raise ValueError("At least one competitor candidate is required")
+
+    competitors: list[Competitor] = []
+    for name, domain in normalized_candidates:
+        competitor = competitor_repository.get_research_competitor_by_domain(
+            db,
+            research_run.id,
+            domain,
+        )
+        if competitor is None:
+            competitor = competitor_repository.create_competitor(
+                db,
+                Competitor(
+                    research_run_id=research_run.id,
+                    name=name,
+                    domain=domain,
+                ),
+            )
+        competitors.append(competitor)
+
+    return competitors

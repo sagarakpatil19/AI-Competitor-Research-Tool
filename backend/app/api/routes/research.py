@@ -3,11 +3,14 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.company_research import CompanyResearch
+from app.models.competitor import Competitor
 from app.models.research_run import ResearchRun
+from app.schemas.competitor import DiscoveredCompetitorResponse, DiscoveryRequest
 from app.schemas.research import (
     CompanyResearchResponse,
     ResearchCreate,
     ResearchResponse,
+    ResearchDiscoverResponse,
     ResearchUnderstandResponse,
 )
 from app.services import research as research_service
@@ -39,6 +42,17 @@ def company_research_to_response(company_research: CompanyResearch) -> CompanyRe
         industry=company_research.industry,
         created_at=company_research.created_at,
         updated_at=company_research.updated_at,
+    )
+
+
+def competitor_to_discovery_response(competitor: Competitor) -> DiscoveredCompetitorResponse:
+    return DiscoveredCompetitorResponse(
+        id=competitor.id,
+        research_run_id=competitor.research_run_id,
+        name=competitor.name,
+        domain=competitor.domain,
+        created_at=competitor.created_at,
+        updated_at=competitor.updated_at,
     )
 
 
@@ -86,4 +100,23 @@ def understand_research(
     return ResearchUnderstandResponse(
         research=to_response(research_run),
         company_research=company_research_to_response(company_research),
+    )
+
+
+@router.post("/{research_id}/discover", response_model=ResearchDiscoverResponse)
+def discover_research(
+    research_id: int,
+    payload: DiscoveryRequest,
+    db: Session = Depends(get_db),
+) -> ResearchDiscoverResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    try:
+        competitors = research_service.discover_competitors(db, research_run, payload.competitors)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return ResearchDiscoverResponse(
+        research=to_response(research_run),
+        competitors=[competitor_to_discovery_response(competitor) for competitor in competitors],
     )

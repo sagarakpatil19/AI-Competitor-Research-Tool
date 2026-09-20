@@ -138,3 +138,143 @@ def test_understand_nonexistent_research_run_returns_not_found(client):
     response = client.post("/api/research/999999/understand")
 
     assert response.status_code == 404
+
+
+def resolve_and_understand(client, company="Notion"):
+    created = client.post("/api/research", json={"company": company}).json()
+    client.post(f"/api/research/{created['research_id']}/resolve")
+    client.post(f"/api/research/{created['research_id']}/understand")
+    return created
+
+
+def test_discover_competitors_creates_foundation(client):
+    research = resolve_and_understand(client)
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["research"]["research_id"] == research["research_id"]
+    assert body["research"]["status"] == "resolving"
+    assert len(body["competitors"]) == 1
+    assert body["competitors"][0]["research_run_id"] == research["research_id"]
+    assert body["competitors"][0]["name"] == "Slack"
+    assert body["competitors"][0]["domain"] == "slack.com"
+
+
+def test_discover_competitors_supports_multiple_candidates(client):
+    research = resolve_and_understand(client)
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={
+            "competitors": [
+                {"name": "Slack", "domain": "slack.com"},
+                {"name": "Evernote", "domain": "evernote.com"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert [item["domain"] for item in response.json()["competitors"]] == [
+        "slack.com",
+        "evernote.com",
+    ]
+
+
+def test_discover_competitors_normalizes_domain(client):
+    research = resolve_and_understand(client)
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": [{"name": "Slack", "domain": " WWW.SLACK.COM. "}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["competitors"][0]["domain"] == "slack.com"
+
+
+def test_discover_competitors_deduplicates_candidates(client):
+    research = resolve_and_understand(client)
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={
+            "competitors": [
+                {"name": "Slack", "domain": "slack.com"},
+                {"name": "Slack duplicate", "domain": "WWW.SLACK.COM"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["competitors"]) == 1
+
+
+def test_discover_competitors_deduplicates_existing_record(client):
+    research = resolve_and_understand(client)
+    endpoint = f"/api/research/{research['research_id']}/discover"
+    payload = {"competitors": [{"name": "Slack", "domain": "slack.com"}]}
+
+    first = client.post(endpoint, json=payload)
+    second = client.post(endpoint, json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["competitors"][0]["id"] == first.json()["competitors"][0]["id"]
+
+
+def test_discover_competitors_rejects_empty_list(client):
+    research = resolve_and_understand(client)
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": []},
+    )
+
+    assert response.status_code == 422
+
+
+def test_discover_competitors_rejects_missing_name(client):
+    research = resolve_and_understand(client)
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": [{"domain": "slack.com"}]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_discover_competitors_rejects_missing_domain(client):
+    research = resolve_and_understand(client)
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": [{"name": "Slack"}]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_discover_competitors_rejects_unresolved_research_run(client):
+    research = client.post("/api/research", json={"company": "Notion"}).json()
+
+    response = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_discover_nonexistent_research_run_returns_not_found(client):
+    response = client.post(
+        "/api/research/999999/discover",
+        json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
+    )
+
+    assert response.status_code == 404

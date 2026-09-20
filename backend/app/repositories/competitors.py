@@ -28,3 +28,26 @@ def save_competitor(db: Session, competitor: Competitor) -> Competitor:
 def delete_competitor(db: Session, competitor: Competitor) -> None:
     db.delete(competitor)
     db.commit()
+
+
+def list_research_competitors(db: Session, research_run_id: int) -> list[Competitor]:
+    return list(
+        db.scalars(
+            select(Competitor)
+            .where(Competitor.research_run_id == research_run_id)
+            .order_by(Competitor.created_at.asc(), Competitor.id.asc())
+        ).all()
+    )
+
+
+def get_research_competitor_by_domain(
+    db: Session,
+    research_run_id: int,
+    domain: str,
+) -> Competitor | None:
+    return db.scalar(
+        select(Competitor).where(
+            Competitor.research_run_id == research_run_id,
+            Competitor.domain == domain,
+        )
+    )

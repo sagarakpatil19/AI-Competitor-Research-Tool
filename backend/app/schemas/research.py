@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.models.research_run import ResearchInputType, ResearchRunStatus
+from app.schemas.competitor import DiscoveredCompetitorResponse
 
 
 class ResearchCreate(BaseModel):
@@ -35,3 +36,8 @@ class CompanyResearchResponse(BaseModel):
 class ResearchUnderstandResponse(BaseModel):
     research: ResearchResponse
     company_research: CompanyResearchResponse
+
+
+class ResearchDiscoverResponse(BaseModel):
+    research: ResearchResponse
+    competitors: list[DiscoveredCompetitorResponse]
