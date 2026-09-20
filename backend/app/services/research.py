@@ -179,3 +179,37 @@ def research_competitors(
             )
         results.append(foundation)
     return results
+
+
+def update_competitor_research(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_id: int,
+    updates: dict[str, str | None],
+) -> CompetitorResearch:
+    if research_run.input_type is None or research_run.status != ResearchRunStatus.RESOLVING:
+        raise ValueError("Research input must be resolved before competitor research")
+
+    if company_research_repository.get_by_research_run_id(db, research_run.id) is None:
+        raise ValueError("Company understanding must be completed before competitor research")
+
+    competitor = competitor_repository.get_competitor(db, competitor_id)
+    if competitor is None:
+        raise ValueError("Competitor not found")
+    if competitor.research_run_id != research_run.id:
+        raise ValueError("Competitor must belong to the research run")
+
+    competitor_research = competitor_research_repository.get_by_competitor_id(db, competitor_id)
+    if competitor_research is None:
+        raise ValueError("Competitor research foundation not found")
+    if not updates:
+        raise ValueError("At least one research field must be supplied")
+
+    for field, value in updates.items():
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError(f"{field} must not be empty")
+        setattr(competitor_research, field, value)
+
+    return competitor_research_repository.save_competitor_research(db, competitor_research)

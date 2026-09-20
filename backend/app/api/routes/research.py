@@ -7,14 +7,15 @@ from app.models.competitor import Competitor
 from app.models.competitor_research import CompetitorResearch
 from app.models.research_run import ResearchRun
 from app.schemas.competitor import DiscoveredCompetitorResponse, DiscoveryRequest
+from app.schemas.competitor_research import CompetitorResearchResponse, CompetitorResearchUpdate
 from app.schemas.research import (
-    CompetitorResearchResponse,
     CompanyResearchResponse,
     ResearchCreate,
     ResearchResponse,
     ResearchDiscoverResponse,
     ResearchCompetitorRequest,
     ResearchCompetitorResponse,
+    ResearchCompetitorUpdateResponse,
     ResearchUnderstandResponse,
 )
 from app.services import research as research_service
@@ -164,4 +165,32 @@ def research_competitors(
         competitor_research=[
             competitor_research_to_response(item) for item in competitor_research
         ],
+    )
+
+
+@router.patch(
+    "/{research_id}/competitors/{competitor_id}/research",
+    response_model=ResearchCompetitorUpdateResponse,
+)
+def update_research_competitor(
+    research_id: int,
+    competitor_id: int,
+    payload: CompetitorResearchUpdate,
+    db: Session = Depends(get_db),
+) -> ResearchCompetitorUpdateResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    try:
+        competitor_research = research_service.update_competitor_research(
+            db,
+            research_run,
+            competitor_id,
+            payload.model_dump(exclude_unset=True),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return ResearchCompetitorUpdateResponse(
+        research=to_response(research_run),
+        competitor_research=competitor_research_to_response(competitor_research),
     )

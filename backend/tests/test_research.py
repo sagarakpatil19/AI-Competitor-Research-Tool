@@ -418,3 +418,176 @@ def test_research_competitors_rejects_missing_research_run(client):
     )
 
     assert response.status_code == 404
+
+
+def create_competitor_research_foundation(client, company="Notion"):
+    research = resolve_and_understand(client, company)
+    discovered = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
+    ).json()
+    competitor_id = discovered["competitors"][0]["id"]
+    researched = client.post(
+        f"/api/research/{research['research_id']}/research",
+        json={"competitor_ids": [competitor_id]},
+    )
+    assert researched.status_code == 200
+    foundation = researched.json()["competitor_research"][0]
+    return research, competitor_id, foundation
+
+
+def test_update_competitor_research_full_payload(client):
+    research, competitor_id, foundation = create_competitor_research_foundation(client)
+    payload = {
+        "description": "Project management and collaboration platform",
+        "industry": "Software / Productivity",
+        "products_services": "Project management, team collaboration, task tracking",
+        "target_customers": "Teams and organizations",
+        "business_model": "Subscription SaaS",
+    }
+
+    response = client.patch(
+        f"/api/research/{research['research_id']}/competitors/{competitor_id}/research",
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["research"]["status"] == "resolving"
+    assert body["competitor_research"]["id"] == foundation["id"]
+    assert body["competitor_research"]["competitor_id"] == competitor_id
+    for field, value in payload.items():
+        assert body["competitor_research"][field] == value
+
+
+def test_update_competitor_research_partial_payload_preserves_other_fields(client):
+    research, competitor_id, _ = create_competitor_research_foundation(client)
+    client.patch(
+        f"/api/research/{research['research_id']}/competitors/{competitor_id}/research",
+        json={
+            "description": "Existing description",
+            "industry": "Existing industry",
+        },
+    )
+
+    response = client.patch(
+        f"/api/research/{research['research_id']}/competitors/{competitor_id}/research",
+        json={"industry": "Updated industry"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()["competitor_research"]
+    assert body["description"] == "Existing description"
+    assert body["industry"] == "Updated industry"
+    assert body["products_services"] is None
+
+
+def test_update_competitor_research_supports_sequential_updates(client):
+    research, competitor_id, foundation = create_competitor_research_foundation(client)
+    endpoint = f"/api/research/{research['research_id']}/competitors/{competitor_id}/research"
+
+    first = client.patch(endpoint, json={"industry": "Productivity"}).json()
+    second = client.patch(endpoint, json={"business_model": "Subscription"}).json()
+
+    assert first["competitor_research"]["id"] == foundation["id"]
+    assert second["competitor_research"]["id"] == foundation["id"]
+    assert second["competitor_research"]["industry"] == "Productivity"
+    assert second["competitor_research"]["business_model"] == "Subscription"
+
+
+def test_update_competitor_research_preserves_ids_and_timestamps(client):
+    research, competitor_id, foundation = create_competitor_research_foundation(client)
+    response = client.patch(
+        f"/api/research/{research['research_id']}/competitors/{competitor_id}/research",
+        json={"industry": "Productivity"},
+    )
+
+    body = response.json()
+    assert body["competitor_research"]["id"] == foundation["id"]
+    assert body["competitor_research"]["competitor_id"] == competitor_id
+    assert body["competitor_research"]["created_at"] == foundation["created_at"]
+    assert body["competitor_research"]["updated_at"]
+
+
+def test_update_competitor_research_rejects_missing_research_run(client):
+    response = client.patch(
+        "/api/research/999999/competitors/1/research",
+        json={"industry": "Productivity"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_update_competitor_research_rejects_missing_company_research(client):
+    research = client.post("/api/research", json={"company": "Notion"}).json()
+    client.post(f"/api/research/{research['research_id']}/resolve")
+    db = SessionLocal()
+    try:
+        competitor = Competitor(
+            research_run_id=research["research_id"],
+            name="Slack",
+            domain="slack.com",
+        )
+        db.add(competitor)
+        db.commit()
+        db.refresh(competitor)
+    finally:
+        db.close()
+
+    response = client.patch(
+        f"/api/research/{research['research_id']}/competitors/{competitor.id}/research",
+        json={"industry": "Productivity"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_competitor_research_rejects_missing_competitor(client):
+    research, _, _ = create_competitor_research_foundation(client)
+
+    response = client.patch(
+        f"/api/research/{research['research_id']}/competitors/999999/research",
+        json={"industry": "Productivity"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_competitor_research_rejects_competitor_from_another_run(client):
+    first_research, competitor_id, _ = create_competitor_research_foundation(client, "Notion")
+    second_research, _, _ = create_competitor_research_foundation(client, "Acme")
+
+    response = client.patch(
+        f"/api/research/{second_research['research_id']}/competitors/{competitor_id}/research",
+        json={"industry": "Productivity"},
+    )
+
+    assert first_research["research_id"] != second_research["research_id"]
+    assert response.status_code == 422
+
+
+def test_update_competitor_research_rejects_missing_foundation(client):
+    research = resolve_and_understand(client)
+    discovered = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
+    ).json()
+    competitor_id = discovered["competitors"][0]["id"]
+
+    response = client.patch(
+        f"/api/research/{research['research_id']}/competitors/{competitor_id}/research",
+        json={"industry": "Productivity"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_competitor_research_rejects_empty_update(client):
+    research, competitor_id, _ = create_competitor_research_foundation(client)
+
+    response = client.patch(
+        f"/api/research/{research['research_id']}/competitors/{competitor_id}/research",
+        json={},
+    )
+
+    assert response.status_code == 422

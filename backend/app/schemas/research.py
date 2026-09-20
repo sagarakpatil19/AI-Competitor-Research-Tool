@@ -51,3 +51,8 @@ class ResearchCompetitorRequest(BaseModel):
 class ResearchCompetitorResponse(BaseModel):
     research: ResearchResponse
     competitor_research: list[CompetitorResearchResponse]
+
+
+class ResearchCompetitorUpdateResponse(BaseModel):
+    research: ResearchResponse
+    competitor_research: CompetitorResearchResponse

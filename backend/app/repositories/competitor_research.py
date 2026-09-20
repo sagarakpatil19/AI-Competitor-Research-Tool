@@ -29,3 +29,12 @@ def create_competitor_research(
     db.commit()
     db.refresh(competitor_research)
     return competitor_research
+
+
+def save_competitor_research(
+    db: Session,
+    competitor_research: CompetitorResearch,
+) -> CompetitorResearch:
+    db.commit()
+    db.refresh(competitor_research)
+    return competitor_research
