@@ -3,7 +3,9 @@ from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
+from app.models.company_research import CompanyResearch
 from app.models.research_run import ResearchInputType, ResearchRun, ResearchRunStatus
+from app.repositories import company_research as company_research_repository
 from app.repositories import research_runs as research_run_repository
 
 
@@ -67,3 +69,30 @@ def resolve_research_run(db: Session, research_run: ResearchRun) -> ResearchRun:
     research_run.input_type = input_type
     research_run.resolved_domain = resolved_domain
     return research_run_repository.save_research_run(db, research_run)
+
+
+def understand_company(db: Session, research_run: ResearchRun) -> CompanyResearch:
+    if research_run.input_type is None or research_run.status != ResearchRunStatus.RESOLVING:
+        raise ValueError("Research input must be resolved before company understanding")
+
+    if research_run.input_type in {ResearchInputType.URL, ResearchInputType.DOMAIN}:
+        if research_run.resolved_domain is None:
+            raise ValueError("A resolved domain is required for this research input")
+
+    company_research = company_research_repository.get_by_research_run_id(db, research_run.id)
+    if company_research is None:
+        company_research = CompanyResearch(research_run_id=research_run.id)
+
+    company_research.company_name = (
+        research_run.input_value
+        if research_run.input_type == ResearchInputType.COMPANY_NAME
+        else company_research.company_name
+    )
+    company_research.domain = research_run.resolved_domain
+
+    if company_research.id is None:
+        company_research = company_research_repository.create_company_research(db, company_research)
+    else:
+        company_research = company_research_repository.save_company_research(db, company_research)
+
+    return company_research

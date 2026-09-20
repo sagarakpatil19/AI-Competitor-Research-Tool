@@ -19,3 +19,19 @@ class ResearchResponse(BaseModel):
     updated_at: datetime
     completed_at: datetime | None
     failure_reason: str | None
+
+
+class CompanyResearchResponse(BaseModel):
+    id: int
+    research_run_id: int
+    company_name: str | None
+    domain: str | None
+    description: str | None
+    industry: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ResearchUnderstandResponse(BaseModel):
+    research: ResearchResponse
+    company_research: CompanyResearchResponse

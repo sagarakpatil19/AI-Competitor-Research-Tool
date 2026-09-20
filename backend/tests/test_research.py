@@ -92,3 +92,49 @@ def test_resolve_nonexistent_research_run_returns_not_found(client):
     response = client.post("/api/research/999999/resolve")
 
     assert response.status_code == 404
+
+
+def test_understand_company_creates_foundation(client):
+    created = client.post(
+        "/api/research",
+        json={"company": "https://www.notion.so/product"},
+    ).json()
+    client.post(f"/api/research/{created['research_id']}/resolve")
+
+    response = client.post(f"/api/research/{created['research_id']}/understand")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["research"]["research_id"] == created["research_id"]
+    assert body["research"]["status"] == "resolving"
+    assert body["company_research"]["research_run_id"] == created["research_id"]
+    assert body["company_research"]["domain"] == "notion.so"
+    assert body["company_research"]["company_name"] is None
+    assert body["company_research"]["description"] is None
+    assert body["company_research"]["industry"] is None
+
+
+def test_understand_company_name_without_domain(client):
+    created = client.post("/api/research", json={"company": "Notion"}).json()
+    client.post(f"/api/research/{created['research_id']}/resolve")
+
+    response = client.post(f"/api/research/{created['research_id']}/understand")
+
+    assert response.status_code == 200
+    assert response.json()["company_research"]["company_name"] == "Notion"
+    assert response.json()["company_research"]["domain"] is None
+    assert response.json()["research"]["status"] == "resolving"
+
+
+def test_understand_unresolved_research_run_is_rejected(client):
+    created = client.post("/api/research", json={"company": "notion.so"}).json()
+
+    response = client.post(f"/api/research/{created['research_id']}/understand")
+
+    assert response.status_code == 422
+
+
+def test_understand_nonexistent_research_run_returns_not_found(client):
+    response = client.post("/api/research/999999/understand")
+
+    assert response.status_code == 404
