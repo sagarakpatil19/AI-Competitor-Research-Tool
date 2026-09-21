@@ -66,3 +66,12 @@ class CompetitorResearch(Base):
         back_populates="competitor_research",
         cascade="all, delete-orphan",
     )
+    ai_analyses: Mapped[list["AIAnalysis"]] = relationship(
+        back_populates="competitor_research",
+    )
+    ai_statements: Mapped[list["AIStatement"]] = relationship(
+        back_populates="competitor_research",
+    )
+    ai_comparison_links: Mapped[list["AIComparisonCompetitor"]] = relationship(
+        back_populates="competitor_research",
+    )

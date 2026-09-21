@@ -39,3 +39,9 @@ class CompetitorResearchFact(Base):
         back_populates="fact",
         cascade="all, delete-orphan",
     )
+    ai_analysis_inputs: Mapped[list["AIAnalysisInputFact"]] = relationship(
+        back_populates="fact",
+    )
+    ai_statement_links: Mapped[list["AIStatementFact"]] = relationship(
+        back_populates="fact",
+    )

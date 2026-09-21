@@ -49,3 +49,9 @@ class CompetitorEvidence(Base):
         back_populates="evidence",
         cascade="all, delete-orphan",
     )
+    ai_analysis_inputs: Mapped[list["AIAnalysisInputEvidence"]] = relationship(
+        back_populates="evidence",
+    )
+    ai_statement_links: Mapped[list["AIStatementEvidence"]] = relationship(
+        back_populates="evidence",
+    )

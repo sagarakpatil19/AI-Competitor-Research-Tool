@@ -1,5 +1,13 @@
 from app.models.company_research import CompanyResearch
 from app.models.company import Company
+from app.models.ai_analysis import AIAnalysis
+from app.models.ai_analysis_input_evidence import AIAnalysisInputEvidence
+from app.models.ai_analysis_input_fact import AIAnalysisInputFact
+from app.models.ai_comparison import AIComparison
+from app.models.ai_comparison_competitor import AIComparisonCompetitor
+from app.models.ai_statement import AIStatement
+from app.models.ai_statement_evidence import AIStatementEvidence
+from app.models.ai_statement_fact import AIStatementFact
 from app.models.competitor import Competitor
 from app.models.competitor_discovery_candidate import CompetitorDiscoveryCandidate
 from app.models.competitor_discovery_candidate_source import CompetitorDiscoveryCandidateSource
@@ -17,6 +25,14 @@ from app.models.research_run import ResearchInputType, ResearchRun, ResearchRunS
 __all__ = [
     "Company",
     "CompanyResearch",
+    "AIAnalysis",
+    "AIAnalysisInputEvidence",
+    "AIAnalysisInputFact",
+    "AIComparison",
+    "AIComparisonCompetitor",
+    "AIStatement",
+    "AIStatementEvidence",
+    "AIStatementFact",
     "Competitor",
     "CompetitorDiscoveryCandidate",
     "CompetitorDiscoveryCandidateSource",
