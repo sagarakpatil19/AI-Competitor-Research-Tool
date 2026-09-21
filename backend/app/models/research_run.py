@@ -56,3 +56,11 @@ class ResearchRun(Base):
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     competitors: Mapped[list["Competitor"]] = relationship(back_populates="research_run")
+    discovery_runs: Mapped[list["CompetitorDiscoveryRun"]] = relationship(
+        back_populates="research_run",
+        cascade="all, delete-orphan",
+    )
+    discovery_candidates: Mapped[list["CompetitorDiscoveryCandidate"]] = relationship(
+        back_populates="research_run",
+        cascade="all, delete-orphan",
+    )

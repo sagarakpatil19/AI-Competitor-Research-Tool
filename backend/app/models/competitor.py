@@ -30,3 +30,6 @@ class Competitor(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    discovery_candidates: Mapped[list["CompetitorDiscoveryCandidate"]] = relationship(
+        back_populates="competitor",
+    )

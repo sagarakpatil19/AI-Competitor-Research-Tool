@@ -1,6 +1,9 @@
 from app.models.company_research import CompanyResearch
 from app.models.company import Company
 from app.models.competitor import Competitor
+from app.models.competitor_discovery_candidate import CompetitorDiscoveryCandidate
+from app.models.competitor_discovery_candidate_source import CompetitorDiscoveryCandidateSource
+from app.models.competitor_discovery_run import CompetitorDiscoveryRun
 from app.models.competitor_evidence import CompetitorEvidence
 from app.models.competitor_research import CompetitorResearch
 from app.models.competitor_source import CompetitorSource
@@ -11,6 +14,9 @@ __all__ = [
     "Company",
     "CompanyResearch",
     "Competitor",
+    "CompetitorDiscoveryCandidate",
+    "CompetitorDiscoveryCandidateSource",
+    "CompetitorDiscoveryRun",
     "CompetitorEvidence",
     "CompetitorResearch",
     "CompetitorSource",
