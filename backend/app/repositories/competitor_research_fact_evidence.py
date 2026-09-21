@@ -17,6 +17,19 @@ def get_link(
     )
 
 
+def list_by_fact_ids(db: Session, fact_ids: list[int]) -> list[CompetitorResearchFactEvidence]:
+    return list(
+        db.scalars(
+            select(CompetitorResearchFactEvidence)
+            .where(CompetitorResearchFactEvidence.fact_id.in_(fact_ids))
+            .order_by(
+                CompetitorResearchFactEvidence.fact_id.asc(),
+                CompetitorResearchFactEvidence.evidence_id.asc(),
+            )
+        ).all()
+    )
+
+
 def create_link(
     db: Session,
     link: CompetitorResearchFactEvidence,

@@ -21,6 +21,23 @@ def list_by_competitor_research_id(
     )
 
 
+
+def list_by_competitor_research_ids(
+    db: Session,
+    competitor_research_ids: list[int],
+) -> list[CompetitorResearchSection]:
+    return list(
+        db.scalars(
+            select(CompetitorResearchSection)
+            .where(CompetitorResearchSection.competitor_research_id.in_(competitor_research_ids))
+            .order_by(
+                CompetitorResearchSection.competitor_research_id.asc(),
+                CompetitorResearchSection.id.asc(),
+            )
+        ).all()
+    )
+
+
 def create_section(db: Session, section: CompetitorResearchSection) -> CompetitorResearchSection:
     db.add(section)
     db.commit()

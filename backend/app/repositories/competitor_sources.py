@@ -8,6 +8,10 @@ def get_source(db: Session, source_id: int) -> CompetitorSource | None:
     return db.get(CompetitorSource, source_id)
 
 
+def get_by_ids(db: Session, source_ids: list[int]) -> list[CompetitorSource]:
+    return list(db.scalars(select(CompetitorSource).where(CompetitorSource.id.in_(source_ids))).all())
+
+
 def get_by_competitor_research_id(
     db: Session,
     competitor_research_id: int,

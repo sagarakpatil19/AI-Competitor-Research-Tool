@@ -60,6 +60,24 @@ def list_by_competitor_research_id(
     )
 
 
+
+def list_by_competitor_research_ids(
+    db: Session,
+    competitor_research_ids: list[int],
+) -> list[CompetitorEvidence]:
+    return list(
+        db.scalars(
+            select(CompetitorEvidence)
+            .where(CompetitorEvidence.competitor_research_id.in_(competitor_research_ids))
+            .order_by(CompetitorEvidence.competitor_research_id.asc(), CompetitorEvidence.id.asc())
+        ).all()
+    )
+
+
+def get_by_ids(db: Session, evidence_ids: list[int]) -> list[CompetitorEvidence]:
+    return list(db.scalars(select(CompetitorEvidence).where(CompetitorEvidence.id.in_(evidence_ids))).all())
+
+
 def create_evidence(db: Session, evidence: CompetitorEvidence) -> CompetitorEvidence:
     db.add(evidence)
     db.commit()

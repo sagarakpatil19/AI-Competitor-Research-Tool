@@ -29,6 +29,16 @@ def get_by_competitor_ids(
     return list(latest_by_competitor_id.values())
 
 
+def get_by_ids(db: Session, competitor_research_ids: list[int]) -> list[CompetitorResearch]:
+    return list(
+        db.scalars(
+            select(CompetitorResearch)
+            .where(CompetitorResearch.id.in_(competitor_research_ids))
+            .order_by(CompetitorResearch.id.asc())
+        ).all()
+    )
+
+
 def create_competitor_research(
     db: Session,
     competitor_research: CompetitorResearch,
