@@ -64,3 +64,6 @@ class ResearchRun(Base):
         back_populates="research_run",
         cascade="all, delete-orphan",
     )
+    competitor_researches: Mapped[list["CompetitorResearch"]] = relationship(
+        back_populates="research_run",
+    )

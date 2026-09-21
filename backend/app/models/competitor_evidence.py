@@ -45,3 +45,7 @@ class CompetitorEvidence(Base):
 
     competitor_research: Mapped["CompetitorResearch"] = relationship(back_populates="evidence")
     source: Mapped["CompetitorSource | None"] = relationship(back_populates="evidence")
+    fact_links: Mapped[list["CompetitorResearchFactEvidence"]] = relationship(
+        back_populates="evidence",
+        cascade="all, delete-orphan",
+    )

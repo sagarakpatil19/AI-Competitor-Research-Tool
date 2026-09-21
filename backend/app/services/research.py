@@ -209,7 +209,10 @@ def research_competitors(
         if foundation is None:
             foundation = competitor_research_repository.create_competitor_research(
                 db,
-                CompetitorResearch(competitor_id=competitor_id),
+                CompetitorResearch(
+                    competitor_id=competitor_id,
+                    research_run_id=research_run.id,
+                ),
             )
         results.append(foundation)
     return results

@@ -6,7 +6,9 @@ from app.models.competitor_research import CompetitorResearch
 
 def get_by_competitor_id(db: Session, competitor_id: int) -> CompetitorResearch | None:
     return db.scalar(
-        select(CompetitorResearch).where(CompetitorResearch.competitor_id == competitor_id)
+        select(CompetitorResearch)
+        .where(CompetitorResearch.competitor_id == competitor_id)
+        .order_by(CompetitorResearch.created_at.desc(), CompetitorResearch.id.desc())
     )
 
 
@@ -14,11 +16,17 @@ def get_by_competitor_ids(
     db: Session,
     competitor_ids: list[int],
 ) -> list[CompetitorResearch]:
-    return list(
+    executions = list(
         db.scalars(
-            select(CompetitorResearch).where(CompetitorResearch.competitor_id.in_(competitor_ids))
+            select(CompetitorResearch)
+            .where(CompetitorResearch.competitor_id.in_(competitor_ids))
+            .order_by(CompetitorResearch.created_at.desc(), CompetitorResearch.id.desc())
         ).all()
     )
+    latest_by_competitor_id: dict[int, CompetitorResearch] = {}
+    for execution in executions:
+        latest_by_competitor_id.setdefault(execution.competitor_id, execution)
+    return list(latest_by_competitor_id.values())
 
 
 def create_competitor_research(
