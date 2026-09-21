@@ -28,6 +28,18 @@ class CompetitorEvidence(Base):
     retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending"
+    )
+    validation_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending"
+    )
+    processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    validation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    normalized_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    normalized_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    normalized_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

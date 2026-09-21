@@ -705,6 +705,187 @@ def test_evidence_rejects_empty_optional_metadata(client):
     assert response.status_code == 422
 
 
+def test_new_evidence_is_pending_and_processing_exposes_structured_fields(client):
+    research, competitor_id, _, endpoint = create_evidence_foundation(client)
+    created = client.post(
+        endpoint,
+        json={"source_url": "https://example.com", "content": "Pending raw content"},
+    )
+
+    assert created.status_code == 201
+    evidence = created.json()["evidence"]
+    assert evidence["processing_status"] == "pending"
+    assert evidence["validation_status"] == "pending"
+    assert evidence["normalized_content"] is None
+
+    process_endpoint = f"{endpoint}/{evidence['id']}/process"
+    processed = client.post(process_endpoint)
+
+    assert processed.status_code == 200
+    result = processed.json()["evidence"]
+    assert result["competitor_research_id"]
+    assert result["processing_status"] == "processed"
+    assert result["validation_status"] == "unusable"
+    assert result["processed_at"]
+    assert research["research_id"]
+    assert competitor_id
+
+
+def test_processing_normalizes_content_and_hashes_deterministically(client):
+    _, _, _, endpoint = create_evidence_foundation(client)
+    raw_content = "  Product\r\n\tstrategy\x00 with   useful punctuation!  " + ("x" * 40)
+    created = client.post(endpoint, json={"source_url": "https://example.com", "content": raw_content})
+    evidence_id = created.json()["evidence"]["id"]
+
+    first = client.post(f"{endpoint}/{evidence_id}/process").json()["evidence"]
+    second = client.post(f"{endpoint}/{evidence_id}/process").json()["evidence"]
+
+    assert first["normalized_content"] == "Product strategy with useful punctuation! " + ("x" * 40)
+    assert first["normalized_content_hash"] == second["normalized_content_hash"]
+    assert first["normalized_content"] == second["normalized_content"]
+    assert first["normalized_excerpt"] == first["normalized_content"][:1000]
+    assert first["validation_status"] == "valid"
+
+
+@pytest.mark.parametrize("content", ["", "   \r\n\t", "short content"])
+def test_processing_marks_empty_and_below_threshold_content_unusable(client, content):
+    _, _, _, endpoint = create_evidence_foundation(client)
+    created = client.post(endpoint, json={"source_url": "https://example.com", "content": content})
+    evidence_id = created.json()["evidence"]["id"]
+
+    response = client.post(f"{endpoint}/{evidence_id}/process")
+
+    assert response.status_code == 200
+    evidence = response.json()["evidence"]
+    assert evidence["processing_status"] == "processed"
+    assert evidence["validation_status"] == "unusable"
+    assert evidence["validation_reason"]
+
+
+def test_processing_marks_duplicate_only_within_competitor_research(client):
+    _, _, _, endpoint = create_evidence_foundation(client)
+    content = "This is sufficiently meaningful evidence content for validation."
+    first = client.post(endpoint, json={"source_url": "https://example.com/one", "content": content})
+    second = client.post(endpoint, json={"source_url": "https://example.com/two", "content": content})
+
+    assert client.post(f"{endpoint}/{first.json()['evidence']['id']}/process").json()["evidence"]["validation_status"] == "valid"
+    duplicate = client.post(f"{endpoint}/{second.json()['evidence']['id']}/process")
+
+    assert duplicate.status_code == 200
+    assert duplicate.json()["evidence"]["validation_status"] == "duplicate"
+
+
+def test_same_content_is_allowed_for_different_competitors(client):
+    research = resolve_and_understand(client)
+    discovered = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={
+            "competitors": [
+                {"name": "Slack", "domain": "slack.com"},
+                {"name": "Evernote", "domain": "evernote.com"},
+            ],
+        },
+    ).json()
+    competitor_ids = [item["id"] for item in discovered["competitors"]]
+    client.post(f"/api/research/{research['research_id']}/research", json={"competitor_ids": competitor_ids})
+    content = "The same source-backed evidence is valid for this separate competitor."
+    endpoints = [
+        f"/api/research/{research['research_id']}/competitors/{competitor_id}/research/evidence"
+        for competitor_id in competitor_ids
+    ]
+    first = client.post(endpoints[0], json={"source_url": "https://example.com", "content": content}).json()["evidence"]
+    second = client.post(endpoints[1], json={"source_url": "https://example.com", "content": content}).json()["evidence"]
+
+    first_processed = client.post(f"{endpoints[0]}/{first['id']}/process").json()["evidence"]
+    second_processed = client.post(f"{endpoints[1]}/{second['id']}/process").json()["evidence"]
+
+    assert first_processed["validation_status"] == "valid"
+    assert second_processed["validation_status"] == "valid"
+
+
+def test_processing_marks_invalid_source_relationship(client):
+    research = resolve_and_understand(client)
+    discovered = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={
+            "competitors": [
+                {"name": "Slack", "domain": "slack.com"},
+                {"name": "Evernote", "domain": "evernote.com"},
+            ],
+        },
+    ).json()
+    competitor_ids = [item["id"] for item in discovered["competitors"]]
+    foundations = client.post(
+        f"/api/research/{research['research_id']}/research",
+        json={"competitor_ids": competitor_ids},
+    ).json()["competitor_research"]
+    source_endpoint = f"/api/research/{research['research_id']}/competitors/{competitor_ids[1]}/research/sources"
+    source = client.post(source_endpoint, json={"source_url": "https://example.com"}).json()["source"]
+    db = SessionLocal()
+    try:
+        evidence = CompetitorEvidence(
+            competitor_research_id=foundations[0]["id"],
+            source_id=source["id"],
+            source_url="https://example.com",
+            content="This evidence has enough meaningful content to validate.",
+        )
+        db.add(evidence)
+        db.commit()
+        db.refresh(evidence)
+        evidence_id = evidence.id
+    finally:
+        db.close()
+
+    process_endpoint = (
+        f"/api/research/{research['research_id']}/competitors/{competitor_ids[0]}"
+        f"/research/evidence/{evidence_id}/process"
+    )
+    response = client.post(process_endpoint)
+
+    assert response.status_code == 200
+    assert response.json()["evidence"]["validation_status"] == "invalid"
+
+
+def test_processing_rejects_missing_and_cross_research_evidence(client):
+    research, competitor_id, _, endpoint = create_evidence_foundation(client)
+    missing = client.post(f"{endpoint}/999999/process")
+    assert missing.status_code == 404
+
+    other_research, other_competitor_id, _, other_endpoint = create_evidence_foundation(client, "Acme")
+    created = client.post(other_endpoint, json={"source_url": "https://example.com", "content": "Evidence for another research run."})
+    cross_endpoint = f"{endpoint}/{created.json()['evidence']['id']}/process"
+    cross = client.post(cross_endpoint)
+
+    assert cross.status_code == 422
+    assert research["research_id"] != other_research["research_id"]
+    assert competitor_id != other_competitor_id
+
+
+def test_processing_failure_persists_and_can_be_retried(client, monkeypatch):
+    _, _, _, endpoint = create_evidence_foundation(client)
+    created = client.post(
+        endpoint,
+        json={"source_url": "https://example.com", "content": "This content is long enough to process successfully."},
+    )
+    evidence_id = created.json()["evidence"]["id"]
+    monkeypatch.setattr(
+        research_service,
+        "_normalize_evidence_content",
+        lambda content: (_ for _ in ()).throw(UnicodeError("normalizer failed")),
+    )
+
+    failed = client.post(f"{endpoint}/{evidence_id}/process")
+    assert failed.status_code == 200
+    assert failed.json()["evidence"]["processing_status"] == "failed"
+    assert failed.json()["evidence"]["validation_status"] == "pending"
+    assert failed.json()["evidence"]["processing_error"] == "Evidence content could not be normalized"
+
+    monkeypatch.undo()
+    retried = client.post(f"{endpoint}/{evidence_id}/process")
+    assert retried.json()["evidence"]["processing_status"] == "processed"
+    assert retried.json()["evidence"]["validation_status"] == "valid"
+
+
 def test_evidence_rejects_missing_research_run(client):
     response = client.post(
         "/api/research/999999/competitors/1/research/evidence",
@@ -906,6 +1087,64 @@ def test_collect_source_creates_evidence_and_updates_state(client, monkeypatch):
     assert body["evidence"]["competitor_research_id"] == foundation["id"]
     assert body["evidence"]["content"] == "Example collected content"
     assert competitor_id
+
+
+def test_repeated_identical_source_collection_reuses_evidence(client, monkeypatch):
+    _, competitor_id, _, endpoint = create_source_foundation(client)
+    registered = client.post(endpoint, json={"source_url": "https://example.com/article"}).json()["source"]
+    monkeypatch.setattr(research_service, "source_retriever", FakeSourceRetriever())
+    collect_endpoint = f"{endpoint}/{registered['id']}/collect"
+
+    first = client.post(collect_endpoint)
+    second = client.post(collect_endpoint)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["evidence"]["id"] == second.json()["evidence"]["id"]
+    db = SessionLocal()
+    try:
+        evidence = list(
+            db.scalars(
+                select(CompetitorEvidence).where(
+                    CompetitorEvidence.source_id == registered["id"]
+                )
+            ).all()
+        )
+    finally:
+        db.close()
+    assert len(evidence) == 1
+    assert competitor_id
+
+
+def test_changed_source_content_reprocesses_existing_evidence(client, monkeypatch):
+    _, _, _, endpoint = create_source_foundation(client)
+    registered = client.post(endpoint, json={"source_url": "https://example.com/article"}).json()["source"]
+
+    class ChangingRetriever:
+        content = "Initial source content that is sufficiently meaningful for validation."
+
+        def retrieve(self, url: str) -> RetrievedSource:
+            return RetrievedSource(
+                final_url=url,
+                http_status=200,
+                content_type="text/plain",
+                content=self.content,
+                content_excerpt=self.content[:1000],
+                content_hash="a" * 64,
+                retrieved_at=datetime.now(timezone.utc),
+            )
+
+    retriever = ChangingRetriever()
+    monkeypatch.setattr(research_service, "source_retriever", retriever)
+    collect_endpoint = f"{endpoint}/{registered['id']}/collect"
+    first = client.post(collect_endpoint).json()["evidence"]
+    retriever.content = "Changed source content that is also sufficiently meaningful for validation."
+    second = client.post(collect_endpoint).json()["evidence"]
+
+    assert first["id"] == second["id"]
+    assert second["content"] != first["content"]
+    assert second["processing_status"] == "processed"
+    assert second["validation_status"] == "valid"
 
 
 def test_collect_source_rejects_cross_competitor_source(client):

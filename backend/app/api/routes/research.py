@@ -101,6 +101,14 @@ def competitor_evidence_to_response(
         retrieved_at=evidence.retrieved_at,
         content=evidence.content,
         content_excerpt=evidence.content_excerpt,
+        processing_status=evidence.processing_status,
+        validation_status=evidence.validation_status,
+        processing_error=evidence.processing_error,
+        validation_reason=evidence.validation_reason,
+        normalized_content=evidence.normalized_content,
+        normalized_excerpt=evidence.normalized_excerpt,
+        normalized_content_hash=evidence.normalized_content_hash,
+        processed_at=evidence.processed_at,
         created_at=evidence.created_at,
         updated_at=evidence.updated_at,
     )
@@ -292,6 +300,36 @@ def list_research_evidence(
     return ResearchEvidenceListResponse(
         research=to_response(research_run),
         evidence=[competitor_evidence_to_response(item) for item in evidence],
+    )
+
+
+@router.post(
+    "/{research_id}/competitors/{competitor_id}/research/evidence/{evidence_id}/process",
+    response_model=ResearchEvidenceResponse,
+)
+def process_research_evidence(
+    research_id: int,
+    competitor_id: int,
+    evidence_id: int,
+    db: Session = Depends(get_db),
+) -> ResearchEvidenceResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    try:
+        evidence = research_service.process_competitor_evidence(
+            db,
+            research_run,
+            competitor_id,
+            evidence_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return ResearchEvidenceResponse(
+        research=to_response(research_run),
+        evidence=competitor_evidence_to_response(evidence),
     )
 
 

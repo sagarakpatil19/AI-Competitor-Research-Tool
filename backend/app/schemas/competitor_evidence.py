@@ -26,5 +26,13 @@ class CompetitorEvidenceResponse(BaseModel):
     retrieved_at: datetime | None
     content: str | None
     content_excerpt: str | None
+    processing_status: str
+    validation_status: str
+    processing_error: str | None
+    validation_reason: str | None
+    normalized_content: str | None
+    normalized_excerpt: str | None
+    normalized_content_hash: str | None
+    processed_at: datetime | None
     created_at: datetime
     updated_at: datetime

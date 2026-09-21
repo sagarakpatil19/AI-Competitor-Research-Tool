@@ -1,4 +1,6 @@
+import hashlib
 import re
+import unicodedata
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -11,6 +13,7 @@ from app.models.competitor_research import CompetitorResearch
 from app.models.competitor_source import CompetitorSource
 from app.integrations.source_retriever import (
     HttpxSourceRetriever,
+    MAX_EXCERPT_LENGTH,
     RetrievalError,
     SourceRetriever,
     canonicalize_url,
@@ -31,6 +34,17 @@ DOMAIN_PATTERN = re.compile(
 )
 
 source_retriever: SourceRetriever = HttpxSourceRetriever()
+
+PROCESSING_PENDING = "pending"
+PROCESSING_PROCESSED = "processed"
+PROCESSING_FAILED = "failed"
+VALIDATION_PENDING = "pending"
+VALIDATION_VALID = "valid"
+VALIDATION_INVALID = "invalid"
+VALIDATION_UNUSABLE = "unusable"
+VALIDATION_DUPLICATE = "duplicate"
+MAX_VALIDATION_REASON_LENGTH = 1000
+MIN_MEANINGFUL_CONTENT_LENGTH = 32
 
 
 class SourceCollectionError(ValueError):
@@ -278,6 +292,97 @@ def create_competitor_evidence(
     return competitor_evidence_repository.create_evidence(db, evidence)
 
 
+def _normalize_evidence_content(content: str | None) -> str:
+    if content is None:
+        return ""
+    normalized = unicodedata.normalize("NFKC", content).replace("\r\n", "\n").replace("\r", "\n")
+    normalized = "".join(
+        character
+        for character in normalized
+        if character in {"\n", "\t"} or not unicodedata.category(character).startswith("C")
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _bounded_reason(reason: str) -> str:
+    return reason[:MAX_VALIDATION_REASON_LENGTH]
+
+
+def process_competitor_evidence(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_id: int,
+    evidence_id: int,
+) -> CompetitorEvidence:
+    competitor = competitor_repository.get_competitor(db, competitor_id)
+    if competitor is None:
+        raise LookupError("Competitor not found")
+    if competitor.research_run_id != research_run.id:
+        raise ValueError("Competitor must belong to the research run")
+    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    evidence = competitor_evidence_repository.get_evidence(db, evidence_id)
+    if evidence is None:
+        raise LookupError("Evidence not found")
+    if evidence.competitor_research_id != competitor_research.id:
+        raise ValueError("Evidence must belong to the competitor research")
+
+    try:
+        normalized_content = _normalize_evidence_content(evidence.content)
+        normalized_hash = hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
+        evidence.normalized_content = normalized_content
+        evidence.normalized_excerpt = normalized_content[:MAX_EXCERPT_LENGTH]
+        evidence.normalized_content_hash = normalized_hash
+        evidence.processing_error = None
+        evidence.processed_at = datetime.now(timezone.utc)
+        evidence.processing_status = PROCESSING_PROCESSED
+        evidence.validation_status = VALIDATION_PENDING
+        evidence.validation_reason = None
+
+        if evidence.source_id is not None:
+            source = evidence.source
+            if source is None or source.competitor_research_id != competitor_research.id:
+                evidence.validation_status = VALIDATION_INVALID
+                evidence.validation_reason = _bounded_reason("Evidence source relationship is invalid")
+            else:
+                try:
+                    canonicalize_url(evidence.source_url)
+                except ValueError:
+                    evidence.validation_status = VALIDATION_INVALID
+                    evidence.validation_reason = _bounded_reason("Evidence source URL is invalid")
+        if evidence.validation_status == VALIDATION_PENDING and not normalized_content:
+            evidence.validation_status = VALIDATION_UNUSABLE
+            evidence.validation_reason = _bounded_reason("Evidence content is empty")
+        elif evidence.validation_status == VALIDATION_PENDING and len(normalized_content) < MIN_MEANINGFUL_CONTENT_LENGTH:
+            evidence.validation_status = VALIDATION_UNUSABLE
+            evidence.validation_reason = _bounded_reason("Evidence content is below the minimum meaningful length")
+        elif evidence.validation_status == VALIDATION_PENDING:
+            duplicate = competitor_evidence_repository.get_by_normalized_hash(
+                db,
+                competitor_research.id,
+                normalized_hash,
+                exclude_evidence_id=evidence.id,
+            )
+            if duplicate is not None:
+                evidence.validation_status = VALIDATION_DUPLICATE
+                evidence.validation_reason = _bounded_reason(f"Duplicate of evidence {duplicate.id}")
+            else:
+                evidence.validation_status = VALIDATION_VALID
+    except UnicodeError:
+        evidence.processing_status = PROCESSING_FAILED
+        evidence.validation_status = VALIDATION_PENDING
+        evidence.processing_error = "Evidence content could not be normalized"
+        evidence.validation_reason = None
+    except Exception:
+        db.rollback()
+        raise
+
+    try:
+        return competitor_evidence_repository.save_evidence(db, evidence)
+    except Exception:
+        db.rollback()
+        raise
+
+
 def register_competitor_source(
     db: Session,
     research_run: ResearchRun,
@@ -364,17 +469,37 @@ def collect_competitor_source(
     source.failure_reason = None
     competitor_source_repository.save_source(db, source)
 
-    evidence = CompetitorEvidence(
-        competitor_research_id=competitor_research.id,
-        source_id=source.id,
-        source_url=retrieved.final_url,
-        source_title=retrieved.source_title,
-        source_type=source.source_type,
-        retrieved_at=retrieved.retrieved_at,
-        content=retrieved.content,
-        content_excerpt=retrieved.content_excerpt,
-    )
-    return source, competitor_evidence_repository.create_evidence(db, evidence)
+    existing_evidence = competitor_evidence_repository.get_by_source_id(db, source.id)
+    evidence = existing_evidence[0] if existing_evidence else None
+    if evidence is None:
+        evidence = CompetitorEvidence(
+            competitor_research_id=competitor_research.id,
+            source_id=source.id,
+            source_url=retrieved.final_url,
+            source_title=retrieved.source_title,
+            source_type=source.source_type,
+            retrieved_at=retrieved.retrieved_at,
+            content=retrieved.content,
+            content_excerpt=retrieved.content_excerpt,
+        )
+        evidence = competitor_evidence_repository.create_evidence(db, evidence)
+    elif evidence.content != retrieved.content:
+        evidence.source_url = retrieved.final_url
+        evidence.source_title = retrieved.source_title
+        evidence.retrieved_at = retrieved.retrieved_at
+        evidence.content = retrieved.content
+        evidence.content_excerpt = retrieved.content_excerpt
+        evidence.processing_status = PROCESSING_PENDING
+        evidence.validation_status = VALIDATION_PENDING
+        evidence.processing_error = None
+        evidence.validation_reason = None
+        evidence.normalized_content = None
+        evidence.normalized_excerpt = None
+        evidence.normalized_content_hash = None
+        evidence.processed_at = None
+        evidence = competitor_evidence_repository.save_evidence(db, evidence)
+
+    return source, process_competitor_evidence(db, research_run, competitor_id, evidence.id)
 
 
 def list_competitor_evidence(

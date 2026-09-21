@@ -14,6 +14,39 @@ def get_by_source_id(db: Session, source_id: int) -> list[CompetitorEvidence]:
     )
 
 
+def get_evidence(db: Session, evidence_id: int) -> CompetitorEvidence | None:
+    return db.get(CompetitorEvidence, evidence_id)
+
+
+def get_by_id_and_competitor_research_id(
+    db: Session,
+    evidence_id: int,
+    competitor_research_id: int,
+) -> CompetitorEvidence | None:
+    return db.scalar(
+        select(CompetitorEvidence).where(
+            CompetitorEvidence.id == evidence_id,
+            CompetitorEvidence.competitor_research_id == competitor_research_id,
+        )
+    )
+
+
+def get_by_normalized_hash(
+    db: Session,
+    competitor_research_id: int,
+    normalized_content_hash: str,
+    exclude_evidence_id: int | None = None,
+) -> CompetitorEvidence | None:
+    statement = select(CompetitorEvidence).where(
+        CompetitorEvidence.competitor_research_id == competitor_research_id,
+        CompetitorEvidence.normalized_content_hash == normalized_content_hash,
+        CompetitorEvidence.validation_status != "duplicate",
+    )
+    if exclude_evidence_id is not None:
+        statement = statement.where(CompetitorEvidence.id != exclude_evidence_id)
+    return db.scalar(statement.order_by(CompetitorEvidence.id.asc()))
+
+
 def list_by_competitor_research_id(
     db: Session,
     competitor_research_id: int,
