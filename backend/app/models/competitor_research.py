@@ -28,3 +28,7 @@ class CompetitorResearch(Base):
         back_populates="competitor_research",
         cascade="all, delete-orphan",
     )
+    sources: Mapped[list["CompetitorSource"]] = relationship(
+        back_populates="competitor_research",
+        cascade="all, delete-orphan",
+    )

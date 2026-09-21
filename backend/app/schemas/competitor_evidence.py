@@ -17,6 +17,7 @@ class CompetitorEvidenceCreate(BaseModel):
 class CompetitorEvidenceResponse(BaseModel):
     id: int
     competitor_research_id: int
+    source_id: int | None
     source_url: HttpUrl
     source_title: str | None
     source_type: str | None

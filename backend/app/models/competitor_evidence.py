@@ -15,6 +15,11 @@ class CompetitorEvidence(Base):
         nullable=False,
         index=True,
     )
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("competitor_sources.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     source_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     source_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     source_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -27,3 +32,4 @@ class CompetitorEvidence(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     competitor_research: Mapped["CompetitorResearch"] = relationship(back_populates="evidence")
+    source: Mapped["CompetitorSource | None"] = relationship(back_populates="evidence")

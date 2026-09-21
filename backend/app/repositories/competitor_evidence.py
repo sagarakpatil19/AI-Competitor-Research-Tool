@@ -4,6 +4,16 @@ from sqlalchemy.orm import Session
 from app.models.competitor_evidence import CompetitorEvidence
 
 
+def get_by_source_id(db: Session, source_id: int) -> list[CompetitorEvidence]:
+    return list(
+        db.scalars(
+            select(CompetitorEvidence)
+            .where(CompetitorEvidence.source_id == source_id)
+            .order_by(CompetitorEvidence.created_at.asc(), CompetitorEvidence.id.asc())
+        ).all()
+    )
+
+
 def list_by_competitor_research_id(
     db: Session,
     competitor_research_id: int,

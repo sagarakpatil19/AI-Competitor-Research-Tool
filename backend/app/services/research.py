@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
@@ -7,11 +8,19 @@ from app.models.company_research import CompanyResearch
 from app.models.competitor import Competitor
 from app.models.competitor_evidence import CompetitorEvidence
 from app.models.competitor_research import CompetitorResearch
+from app.models.competitor_source import CompetitorSource
+from app.integrations.source_retriever import (
+    HttpxSourceRetriever,
+    RetrievalError,
+    SourceRetriever,
+    canonicalize_url,
+)
 from app.models.research_run import ResearchInputType, ResearchRun, ResearchRunStatus
 from app.repositories import company_research as company_research_repository
 from app.repositories import competitors as competitor_repository
 from app.repositories import competitor_research as competitor_research_repository
 from app.repositories import competitor_evidence as competitor_evidence_repository
+from app.repositories import competitor_sources as competitor_source_repository
 from app.repositories import research_runs as research_run_repository
 
 
@@ -20,6 +29,15 @@ DOMAIN_PATTERN = re.compile(
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.?$",
     re.IGNORECASE,
 )
+
+source_retriever: SourceRetriever = HttpxSourceRetriever()
+
+
+class SourceCollectionError(ValueError):
+    def __init__(self, category: str, reason: str, http_status: int | None = None) -> None:
+        super().__init__(reason)
+        self.category = category
+        self.http_status = http_status
 
 
 def _normalize_domain(hostname: str) -> str:
@@ -258,6 +276,105 @@ def create_competitor_evidence(
         **evidence_data,
     )
     return competitor_evidence_repository.create_evidence(db, evidence)
+
+
+def register_competitor_source(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_id: int,
+    source_data: dict,
+) -> tuple[CompetitorSource, bool]:
+    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    try:
+        canonical_url = canonicalize_url(str(source_data["source_url"]))
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+
+    for field in ("source_type", "discovery_method"):
+        value = source_data.get(field)
+        if value is not None:
+            normalized_value = value.strip()
+            if not normalized_value:
+                raise ValueError(f"{field} must not be empty")
+            source_data[field] = normalized_value
+    if source_data.get("discovery_method") is None:
+        source_data["discovery_method"] = "manual"
+
+    existing = competitor_source_repository.get_by_canonical_url(
+        db,
+        competitor_research.id,
+        canonical_url,
+    )
+    if existing is not None:
+        return existing, False
+
+    source = CompetitorSource(
+        competitor_research_id=competitor_research.id,
+        canonical_url=canonical_url,
+        source_type=source_data.get("source_type"),
+        discovery_method=source_data.get("discovery_method"),
+    )
+    return competitor_source_repository.create_source(db, source), True
+
+
+def list_competitor_sources(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_id: int,
+) -> list[CompetitorSource]:
+    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    return competitor_source_repository.get_by_competitor_research_id(db, competitor_research.id)
+
+
+def collect_competitor_source(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_id: int,
+    source_id: int,
+) -> tuple[CompetitorSource, CompetitorEvidence]:
+    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    source = competitor_source_repository.get_source(db, source_id)
+    if source is None:
+        raise ValueError("Source not found")
+    if source.competitor_research_id != competitor_research.id:
+        raise ValueError("Source must belong to the competitor research")
+
+    source.status = "fetching"
+    source.attempt_count += 1
+    source.last_attempted_at = datetime.now(timezone.utc)
+    source.failure_category = None
+    source.failure_reason = None
+    competitor_source_repository.save_source(db, source)
+
+    try:
+        retrieved = source_retriever.retrieve(source.canonical_url)
+    except RetrievalError as exc:
+        source.status = "failed"
+        source.last_http_status = exc.http_status
+        source.failure_category = exc.category
+        source.failure_reason = exc.reason
+        competitor_source_repository.save_source(db, source)
+        response_status = 502 if exc.category not in {"invalid_url", "unsafe_destination", "unsupported_scheme"} else 422
+        raise SourceCollectionError(exc.category, exc.reason, response_status) from exc
+
+    source.status = "collected"
+    source.last_http_status = retrieved.http_status
+    source.content_hash = retrieved.content_hash
+    source.failure_category = None
+    source.failure_reason = None
+    competitor_source_repository.save_source(db, source)
+
+    evidence = CompetitorEvidence(
+        competitor_research_id=competitor_research.id,
+        source_id=source.id,
+        source_url=retrieved.final_url,
+        source_title=retrieved.source_title,
+        source_type=source.source_type,
+        retrieved_at=retrieved.retrieved_at,
+        content=retrieved.content,
+        content_excerpt=retrieved.content_excerpt,
+    )
+    return source, competitor_evidence_repository.create_evidence(db, evidence)
 
 
 def list_competitor_evidence(

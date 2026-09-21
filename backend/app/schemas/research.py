@@ -6,6 +6,7 @@ from app.models.research_run import ResearchInputType, ResearchRunStatus
 from app.schemas.competitor import DiscoveredCompetitorResponse
 from app.schemas.competitor_research import CompetitorResearchResponse
 from app.schemas.competitor_evidence import CompetitorEvidenceResponse
+from app.schemas.competitor_source import CompetitorSourceResponse
 
 
 class ResearchCreate(BaseModel):
@@ -67,3 +68,19 @@ class ResearchEvidenceResponse(BaseModel):
 class ResearchEvidenceListResponse(BaseModel):
     research: ResearchResponse
     evidence: list[CompetitorEvidenceResponse]
+
+
+class ResearchSourceResponse(BaseModel):
+    research: ResearchResponse
+    source: CompetitorSourceResponse
+
+
+class ResearchSourceListResponse(BaseModel):
+    research: ResearchResponse
+    sources: list[CompetitorSourceResponse]
+
+
+class ResearchSourceCollectionResponse(BaseModel):
+    research: ResearchResponse
+    source: CompetitorSourceResponse
+    evidence: CompetitorEvidenceResponse | None

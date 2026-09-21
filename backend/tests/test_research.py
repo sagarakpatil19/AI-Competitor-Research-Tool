@@ -1,6 +1,15 @@
+from datetime import datetime, timezone
+
+import pytest
+from sqlalchemy import select
+
 from app.db.session import SessionLocal
+from app.integrations.source_retriever import RetrievedSource
 from app.models.competitor import Competitor
+from app.models.competitor_evidence import CompetitorEvidence
+from app.models.competitor_source import CompetitorSource
 from app.models.research_run import ResearchRun
+from app.services import research as research_service
 
 
 def test_create_research_run(client):
@@ -769,3 +778,251 @@ def test_evidence_rejects_missing_competitor_research(client):
     )
 
     assert response.status_code == 422
+
+
+def create_source_foundation(client, company="Notion"):
+    research, competitor_id, foundation = create_competitor_research_foundation(client, company)
+    endpoint = f"/api/research/{research['research_id']}/competitors/{competitor_id}/research/sources"
+    return research, competitor_id, foundation, endpoint
+
+
+def test_register_http_source(client):
+    research, competitor_id, foundation, endpoint = create_source_foundation(client)
+
+    response = client.post(
+        endpoint,
+        json={
+            "source_url": "http://example.com/article",
+            "source_type": "article",
+            "discovery_method": "manual",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["research"]["research_id"] == research["research_id"]
+    assert body["source"]["competitor_research_id"] == foundation["id"]
+    assert body["source"]["canonical_url"] == "http://example.com/article"
+    assert body["source"]["status"] == "discovered"
+    assert body["source"]["attempt_count"] == 0
+    assert competitor_id
+
+
+def test_register_source_canonicalizes_and_deduplicates(client):
+    _, _, _, endpoint = create_source_foundation(client)
+    first = client.post(endpoint, json={"source_url": "HTTPS://Example.COM:443/article#section"})
+    second = client.post(endpoint, json={"source_url": "https://example.com/article"})
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert first.json()["source"]["id"] == second.json()["source"]["id"]
+    assert second.json()["source"]["canonical_url"] == "https://example.com/article"
+
+
+def test_register_source_allows_same_url_for_different_competitors(client):
+    research = resolve_and_understand(client)
+    discovered = client.post(
+        f"/api/research/{research['research_id']}/discover",
+        json={
+            "competitors": [
+                {"name": "Slack", "domain": "slack.com"},
+                {"name": "Evernote", "domain": "evernote.com"},
+            ]
+        },
+    ).json()
+    competitor_ids = [item["id"] for item in discovered["competitors"]]
+    client.post(f"/api/research/{research['research_id']}/research", json={"competitor_ids": competitor_ids})
+    endpoints = [
+        f"/api/research/{research['research_id']}/competitors/{competitor_id}/research/sources"
+        for competitor_id in competitor_ids
+    ]
+
+    first = client.post(endpoints[0], json={"source_url": "https://example.com"})
+    second = client.post(endpoints[1], json={"source_url": "https://example.com"})
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["source"]["id"] != second.json()["source"]["id"]
+
+
+def test_list_sources_is_ordered_and_scoped(client):
+    research, _, foundation, endpoint = create_source_foundation(client)
+    client.post(endpoint, json={"source_url": "https://example.com/b"})
+    client.post(endpoint, json={"source_url": "https://example.com/a"})
+
+    response = client.get(endpoint)
+
+    assert response.status_code == 200
+    assert [item["canonical_url"] for item in response.json()["sources"]] == [
+        "https://example.com/b",
+        "https://example.com/a",
+    ]
+    assert all(item["competitor_research_id"] == foundation["id"] for item in response.json()["sources"])
+    assert response.json()["research"]["status"] == "resolving"
+
+
+def test_register_source_rejects_invalid_url(client):
+    _, _, _, endpoint = create_source_foundation(client)
+
+    empty = client.post(endpoint, json={"source_url": "   "})
+    ftp = client.post(endpoint, json={"source_url": "ftp://example.com/file"})
+
+    assert empty.status_code == 422
+    assert ftp.status_code == 422
+
+
+class FakeSourceRetriever:
+    def retrieve(self, url: str) -> RetrievedSource:
+        content = "Example collected content"
+        return RetrievedSource(
+            final_url=url,
+            http_status=200,
+            content_type="text/plain",
+            content=content,
+            content_excerpt=content,
+            content_hash="a" * 64,
+            retrieved_at=datetime.now(timezone.utc),
+            source_title="Collected title",
+        )
+
+
+def test_collect_source_creates_evidence_and_updates_state(client, monkeypatch):
+    research, competitor_id, foundation, endpoint = create_source_foundation(client)
+    registered = client.post(endpoint, json={"source_url": "https://example.com/article"}).json()["source"]
+    monkeypatch.setattr(research_service, "source_retriever", FakeSourceRetriever())
+
+    response = client.post(
+        f"{endpoint}/{registered['id']}/collect"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["research"]["status"] == "resolving"
+    assert body["source"]["status"] == "collected"
+    assert body["source"]["attempt_count"] == 1
+    assert body["source"]["last_http_status"] == 200
+    assert body["source"]["content_hash"] == "a" * 64
+    assert body["evidence"]["source_id"] == registered["id"]
+    assert body["evidence"]["competitor_research_id"] == foundation["id"]
+    assert body["evidence"]["content"] == "Example collected content"
+    assert competitor_id
+
+
+def test_collect_source_rejects_cross_competitor_source(client):
+    first_research, first_competitor_id, _, first_endpoint = create_source_foundation(client, "Notion")
+    second_research, _, _, _ = create_source_foundation(client, "Acme")
+    registered = client.post(first_endpoint, json={"source_url": "https://example.com"}).json()["source"]
+
+    response = client.post(
+        f"/api/research/{second_research['research_id']}/competitors/{first_competitor_id}/research/sources/{registered['id']}/collect"
+    )
+
+    assert first_research["research_id"] != second_research["research_id"]
+    assert response.status_code == 422
+
+
+def test_collect_source_failure_persists_failed_state_without_evidence(client, monkeypatch):
+    from app.integrations.source_retriever import RetrievalError
+
+    _, _, _, endpoint = create_source_foundation(client)
+    registered = client.post(endpoint, json={"source_url": "https://example.com"}).json()["source"]
+
+    class FailedRetriever:
+        def retrieve(self, url: str) -> RetrievedSource:
+            raise RetrievalError("timeout", "Source request timed out")
+
+    monkeypatch.setattr(research_service, "source_retriever", FailedRetriever())
+    response = client.post(f"{endpoint}/{registered['id']}/collect")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Source request timed out"
+
+    db = SessionLocal()
+    try:
+        source = db.get(CompetitorSource, registered["id"])
+        evidence = list(
+            db.scalars(
+                select(CompetitorEvidence).where(CompetitorEvidence.source_id == registered["id"])
+            ).all()
+        )
+    finally:
+        db.close()
+
+    assert source is not None
+    assert source.status == "failed"
+    assert source.attempt_count == 1
+    assert source.last_attempted_at is not None
+    assert source.failure_category == "timeout"
+    assert source.failure_reason == "Source request timed out"
+    assert source.last_http_status is None
+    assert evidence == []
+
+
+@pytest.mark.parametrize(
+    ("status_code", "category"),
+    [(404, "http_4xx"), (403, "http_4xx"), (500, "http_5xx"), (503, "http_5xx")],
+)
+def test_collect_source_persists_http_failure_state(client, monkeypatch, status_code, category):
+    _, _, _, endpoint = create_source_foundation(client)
+    registered = client.post(endpoint, json={"source_url": "https://example.com"}).json()["source"]
+
+    class HttpFailureRetriever:
+        def retrieve(self, url: str) -> RetrievedSource:
+            from app.integrations.source_retriever import RetrievalError
+
+            raise RetrievalError(category, f"Source returned HTTP {status_code}", status_code)
+
+    monkeypatch.setattr(research_service, "source_retriever", HttpFailureRetriever())
+    response = client.post(f"{endpoint}/{registered['id']}/collect")
+
+    assert response.status_code == 502
+    db = SessionLocal()
+    try:
+        source = db.get(CompetitorSource, registered["id"])
+        evidence = list(
+            db.scalars(
+                select(CompetitorEvidence).where(CompetitorEvidence.source_id == registered["id"])
+            ).all()
+        )
+    finally:
+        db.close()
+
+    assert source is not None
+    assert source.status == "failed"
+    assert source.attempt_count == 1
+    assert source.last_attempted_at is not None
+    assert source.failure_category == category
+    assert source.last_http_status == status_code
+    assert evidence == []
+
+
+def test_collect_source_persists_unsupported_content_failure(client, monkeypatch):
+    _, _, _, endpoint = create_source_foundation(client)
+    registered = client.post(endpoint, json={"source_url": "https://example.com"}).json()["source"]
+
+    class UnsupportedContentRetriever:
+        def retrieve(self, url: str) -> RetrievedSource:
+            from app.integrations.source_retriever import RetrievalError
+
+            raise RetrievalError("unsupported_content_type", "Source content type is not supported", 200)
+
+    monkeypatch.setattr(research_service, "source_retriever", UnsupportedContentRetriever())
+    response = client.post(f"{endpoint}/{registered['id']}/collect")
+
+    assert response.status_code == 422
+    db = SessionLocal()
+    try:
+        source = db.get(CompetitorSource, registered["id"])
+        evidence = list(
+            db.scalars(
+                select(CompetitorEvidence).where(CompetitorEvidence.source_id == registered["id"])
+            ).all()
+        )
+    finally:
+        db.close()
+
+    assert source is not None
+    assert source.status == "failed"
+    assert source.failure_category == "unsupported_content_type"
+    assert source.last_http_status == 200
+    assert evidence == []

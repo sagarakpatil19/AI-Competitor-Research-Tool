@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -6,10 +6,12 @@ from app.models.company_research import CompanyResearch
 from app.models.competitor import Competitor
 from app.models.competitor_evidence import CompetitorEvidence
 from app.models.competitor_research import CompetitorResearch
+from app.models.competitor_source import CompetitorSource
 from app.models.research_run import ResearchRun
 from app.schemas.competitor import DiscoveredCompetitorResponse, DiscoveryRequest
 from app.schemas.competitor_evidence import CompetitorEvidenceCreate, CompetitorEvidenceResponse
 from app.schemas.competitor_research import CompetitorResearchResponse, CompetitorResearchUpdate
+from app.schemas.competitor_source import CompetitorSourceCreate, CompetitorSourceResponse
 from app.schemas.research import (
     CompanyResearchResponse,
     ResearchCreate,
@@ -20,6 +22,9 @@ from app.schemas.research import (
     ResearchCompetitorUpdateResponse,
     ResearchEvidenceListResponse,
     ResearchEvidenceResponse,
+    ResearchSourceCollectionResponse,
+    ResearchSourceListResponse,
+    ResearchSourceResponse,
     ResearchUnderstandResponse,
 )
 from app.services import research as research_service
@@ -87,6 +92,7 @@ def competitor_evidence_to_response(
     return CompetitorEvidenceResponse(
         id=evidence.id,
         competitor_research_id=evidence.competitor_research_id,
+        source_id=evidence.source_id,
         source_url=evidence.source_url,
         source_title=evidence.source_title,
         source_type=evidence.source_type,
@@ -97,6 +103,25 @@ def competitor_evidence_to_response(
         content_excerpt=evidence.content_excerpt,
         created_at=evidence.created_at,
         updated_at=evidence.updated_at,
+    )
+
+
+def competitor_source_to_response(source: CompetitorSource) -> CompetitorSourceResponse:
+    return CompetitorSourceResponse(
+        id=source.id,
+        competitor_research_id=source.competitor_research_id,
+        canonical_url=source.canonical_url,
+        source_type=source.source_type,
+        discovery_method=source.discovery_method,
+        status=source.status,
+        attempt_count=source.attempt_count,
+        last_http_status=source.last_http_status,
+        last_attempted_at=source.last_attempted_at,
+        failure_category=source.failure_category,
+        failure_reason=source.failure_reason,
+        content_hash=source.content_hash,
+        created_at=source.created_at,
+        updated_at=source.updated_at,
     )
 
 
@@ -267,4 +292,88 @@ def list_research_evidence(
     return ResearchEvidenceListResponse(
         research=to_response(research_run),
         evidence=[competitor_evidence_to_response(item) for item in evidence],
+    )
+
+
+@router.post(
+    "/{research_id}/competitors/{competitor_id}/research/sources",
+    response_model=ResearchSourceResponse,
+)
+def register_research_source(
+    research_id: int,
+    competitor_id: int,
+    response: Response,
+    payload: CompetitorSourceCreate,
+    db: Session = Depends(get_db),
+) -> ResearchSourceResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    try:
+        source, created = research_service.register_competitor_source(
+            db,
+            research_run,
+            competitor_id,
+            payload.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    response_body = ResearchSourceResponse(
+        research=to_response(research_run),
+        source=competitor_source_to_response(source),
+    )
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    return response_body
+
+
+@router.get(
+    "/{research_id}/competitors/{competitor_id}/research/sources",
+    response_model=ResearchSourceListResponse,
+)
+def list_research_sources(
+    research_id: int,
+    competitor_id: int,
+    db: Session = Depends(get_db),
+) -> ResearchSourceListResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    try:
+        sources = research_service.list_competitor_sources(db, research_run, competitor_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return ResearchSourceListResponse(
+        research=to_response(research_run),
+        sources=[competitor_source_to_response(source) for source in sources],
+    )
+
+
+@router.post(
+    "/{research_id}/competitors/{competitor_id}/research/sources/{source_id}/collect",
+    response_model=ResearchSourceCollectionResponse,
+)
+def collect_research_source(
+    research_id: int,
+    competitor_id: int,
+    source_id: int,
+    db: Session = Depends(get_db),
+) -> ResearchSourceCollectionResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    try:
+        source, evidence = research_service.collect_competitor_source(
+            db,
+            research_run,
+            competitor_id,
+            source_id,
+        )
+    except research_service.SourceCollectionError as exc:
+        raise HTTPException(status_code=exc.http_status or status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return ResearchSourceCollectionResponse(
+        research=to_response(research_run),
+        source=competitor_source_to_response(source),
+        evidence=competitor_evidence_to_response(evidence),
     )
