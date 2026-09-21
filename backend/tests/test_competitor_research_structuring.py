@@ -132,6 +132,22 @@ def test_invalid_pending_and_duplicate_evidence_produce_no_facts():
         engine.dispose()
 
 
+def test_no_valid_evidence_marks_all_sections_no_evidence():
+    engine, db = make_db()
+    try:
+        research_run, _, execution = create_execution(db)
+
+        structure_competitor_research(db, research_run, execution.id)
+
+        sections = db.scalars(select(CompetitorResearchSection)).all()
+        assert len(sections) == 6
+        assert {section.status for section in sections} == {"no_evidence"}
+        assert all(section.reason == "No valid evidence was available for structuring." for section in sections)
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_unsupported_valid_text_sets_no_evidence_without_inventing_facts():
     engine, db = make_db()
     try:

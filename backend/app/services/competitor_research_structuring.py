@@ -332,6 +332,7 @@ def structure_competitor_research(
                 section.status = CompetitorResearchSectionStatus.NO_EVIDENCE.value
                 section.reason = "No deterministic structured fact was extracted from valid evidence."
             else:
+                section.status = CompetitorResearchSectionStatus.NO_EVIDENCE.value
                 section.reason = "No valid evidence was available for structuring."
 
         execution.status = "completed"
