@@ -11,6 +11,7 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 class Settings:
     cors_origins: list[str]
     database_url: str
+    tavily_api_key: str | None
 
 
 def _parse_origins(value: str) -> list[str]:
@@ -22,6 +23,7 @@ settings = Settings(
         os.getenv("CORS_ORIGINS", "http://localhost:3000")
     ),
     database_url=os.getenv("DATABASE_URL", ""),
+    tavily_api_key=os.getenv("TAVILY_API_KEY"),
 )
 
 if not settings.database_url:
