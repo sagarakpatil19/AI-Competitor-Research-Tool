@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -334,6 +335,7 @@ def structure_competitor_research(
                 section.reason = "No valid evidence was available for structuring."
 
         execution.status = "completed"
+        execution.completed_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(execution)
         return execution

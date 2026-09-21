@@ -341,7 +341,7 @@ def test_research_competitors_deduplicates_ids(client):
     assert len(response.json()["competitor_research"]) == 1
 
 
-def test_research_competitors_reuses_existing_foundation(client):
+def test_research_competitors_creates_new_execution_for_repeated_call(client):
     research = resolve_and_understand(client)
     discovered = client.post(
         f"/api/research/{research['research_id']}/discover",
@@ -353,7 +353,8 @@ def test_research_competitors_reuses_existing_foundation(client):
     first = client.post(endpoint, json={"competitor_ids": [competitor_id]}).json()
     second = client.post(endpoint, json={"competitor_ids": [competitor_id]}).json()
 
-    assert second["competitor_research"][0]["id"] == first["competitor_research"][0]["id"]
+    assert second["competitor_research"][0]["id"] != first["competitor_research"][0]["id"]
+    assert second["competitor_research"][0]["competitor_id"] == competitor_id
 
 
 def test_research_competitors_rejects_empty_ids(client):

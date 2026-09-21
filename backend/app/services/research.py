@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.models.company_research import CompanyResearch
 from app.models.competitor import Competitor
 from app.models.competitor_evidence import CompetitorEvidence
-from app.models.competitor_research import CompetitorResearch
+from app.models.competitor_research import CompetitorResearch, CompetitorResearchStatus
 from app.models.competitor_source import CompetitorSource
 from app.integrations.source_retriever import (
     HttpxSourceRetriever,
@@ -201,21 +201,94 @@ def research_competitors(
     if any(competitor.research_run_id != research_run.id for competitor in competitors):
         raise ValueError("All competitors must belong to the research run")
 
-    existing = competitor_research_repository.get_by_competitor_ids(db, unique_ids)
-    existing_by_competitor_id = {item.competitor_id: item for item in existing}
     results: list[CompetitorResearch] = []
     for competitor_id in unique_ids:
-        foundation = existing_by_competitor_id.get(competitor_id)
-        if foundation is None:
-            foundation = competitor_research_repository.create_competitor_research(
-                db,
-                CompetitorResearch(
-                    competitor_id=competitor_id,
-                    research_run_id=research_run.id,
-                ),
-            )
-        results.append(foundation)
+        results.append(create_competitor_research_execution(db, research_run, competitor_id))
     return results
+
+
+def get_competitor_research_execution(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_research_id: int,
+) -> CompetitorResearch:
+    execution = db.get(CompetitorResearch, competitor_research_id)
+    if execution is None:
+        raise ValueError("Competitor research execution not found")
+
+    competitor = competitor_repository.get_competitor(db, execution.competitor_id)
+    if competitor is None:
+        raise ValueError("Competitor not found")
+    if competitor.research_run_id != research_run.id:
+        raise ValueError("Competitor must belong to the research run")
+    if execution.research_run_id != research_run.id:
+        raise ValueError("Competitor research execution must belong to the research run")
+    if execution.research_run_id != competitor.research_run_id:
+        raise ValueError("Competitor research execution ownership is invalid")
+    return execution
+
+
+def create_competitor_research_execution(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_id: int,
+) -> CompetitorResearch:
+    if research_run.input_type is None or research_run.status != ResearchRunStatus.RESOLVING:
+        raise ValueError("Research input must be resolved before competitor research")
+    if company_research_repository.get_by_research_run_id(db, research_run.id) is None:
+        raise ValueError("Company understanding must be completed before competitor research")
+
+    competitor = competitor_repository.get_competitor(db, competitor_id)
+    if competitor is None:
+        raise ValueError("Competitor not found")
+    if competitor.research_run_id != research_run.id:
+        raise ValueError("Competitor must belong to the research run")
+
+    return competitor_research_repository.create_competitor_research(
+        db,
+        CompetitorResearch(
+            competitor_id=competitor.id,
+            research_run_id=research_run.id,
+            status=CompetitorResearchStatus.PENDING.value,
+        ),
+    )
+
+
+def start_competitor_research_collection(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_research_id: int,
+) -> CompetitorResearch:
+    execution = get_competitor_research_execution(db, research_run, competitor_research_id)
+    if execution.status == CompetitorResearchStatus.COLLECTING.value:
+        return execution
+    if execution.status != CompetitorResearchStatus.PENDING.value:
+        raise ValueError("Competitor research execution is not pending")
+
+    execution.status = CompetitorResearchStatus.COLLECTING.value
+    execution.started_at = datetime.now(timezone.utc)
+    return competitor_research_repository.save_competitor_research(db, execution)
+
+
+def fail_competitor_research_execution(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_research_id: int,
+    failure_reason: str,
+) -> CompetitorResearch:
+    execution = get_competitor_research_execution(db, research_run, competitor_research_id)
+    reason = failure_reason.strip()
+    if not reason:
+        raise ValueError("Failure reason must not be empty")
+    if execution.status in {
+        CompetitorResearchStatus.COMPLETED.value,
+        CompetitorResearchStatus.FAILED.value,
+    }:
+        raise ValueError("Competitor research execution cannot be failed from its current status")
+
+    execution.status = CompetitorResearchStatus.FAILED.value
+    execution.failure_reason = reason
+    return competitor_research_repository.save_competitor_research(db, execution)
 
 
 def update_competitor_research(
@@ -256,6 +329,7 @@ def _require_competitor_research(
     db: Session,
     research_run: ResearchRun,
     competitor_id: int,
+    competitor_research_id: int | None = None,
 ) -> CompetitorResearch:
     if company_research_repository.get_by_research_run_id(db, research_run.id) is None:
         raise ValueError("Company understanding must be completed before evidence collection")
@@ -265,6 +339,16 @@ def _require_competitor_research(
         raise ValueError("Competitor not found")
     if competitor.research_run_id != research_run.id:
         raise ValueError("Competitor must belong to the research run")
+
+    if competitor_research_id is not None:
+        competitor_research = get_competitor_research_execution(
+            db,
+            research_run,
+            competitor_research_id,
+        )
+        if competitor_research.competitor_id != competitor_id:
+            raise ValueError("Competitor research execution must belong to the competitor")
+        return competitor_research
 
     competitor_research = competitor_research_repository.get_by_competitor_id(db, competitor_id)
     if competitor_research is None:
@@ -277,8 +361,14 @@ def create_competitor_evidence(
     research_run: ResearchRun,
     competitor_id: int,
     evidence_data: dict,
+    competitor_research_id: int | None = None,
 ) -> CompetitorEvidence:
-    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    competitor_research = _require_competitor_research(
+        db,
+        research_run,
+        competitor_id,
+        competitor_research_id,
+    )
     evidence_data["source_url"] = str(evidence_data["source_url"])
     for field in ("source_title", "source_type", "publisher"):
         value = evidence_data.get(field)
@@ -316,13 +406,19 @@ def process_competitor_evidence(
     research_run: ResearchRun,
     competitor_id: int,
     evidence_id: int,
+    competitor_research_id: int | None = None,
 ) -> CompetitorEvidence:
     competitor = competitor_repository.get_competitor(db, competitor_id)
     if competitor is None:
         raise LookupError("Competitor not found")
     if competitor.research_run_id != research_run.id:
         raise ValueError("Competitor must belong to the research run")
-    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    competitor_research = _require_competitor_research(
+        db,
+        research_run,
+        competitor_id,
+        competitor_research_id,
+    )
     evidence = competitor_evidence_repository.get_evidence(db, evidence_id)
     if evidence is None:
         raise LookupError("Evidence not found")
@@ -391,8 +487,14 @@ def register_competitor_source(
     research_run: ResearchRun,
     competitor_id: int,
     source_data: dict,
+    competitor_research_id: int | None = None,
 ) -> tuple[CompetitorSource, bool]:
-    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    competitor_research = _require_competitor_research(
+        db,
+        research_run,
+        competitor_id,
+        competitor_research_id,
+    )
     try:
         canonical_url = canonicalize_url(str(source_data["source_url"]))
     except ValueError as exc:
@@ -429,8 +531,14 @@ def list_competitor_sources(
     db: Session,
     research_run: ResearchRun,
     competitor_id: int,
+    competitor_research_id: int | None = None,
 ) -> list[CompetitorSource]:
-    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    competitor_research = _require_competitor_research(
+        db,
+        research_run,
+        competitor_id,
+        competitor_research_id,
+    )
     return competitor_source_repository.get_by_competitor_research_id(db, competitor_research.id)
 
 
@@ -439,13 +547,21 @@ def collect_competitor_source(
     research_run: ResearchRun,
     competitor_id: int,
     source_id: int,
+    competitor_research_id: int | None = None,
 ) -> tuple[CompetitorSource, CompetitorEvidence]:
-    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    competitor_research = _require_competitor_research(
+        db,
+        research_run,
+        competitor_id,
+        competitor_research_id,
+    )
     source = competitor_source_repository.get_source(db, source_id)
     if source is None:
         raise ValueError("Source not found")
     if source.competitor_research_id != competitor_research.id:
         raise ValueError("Source must belong to the competitor research")
+
+    start_competitor_research_collection(db, research_run, competitor_research.id)
 
     source.status = "fetching"
     source.attempt_count += 1
@@ -509,8 +625,14 @@ def list_competitor_evidence(
     db: Session,
     research_run: ResearchRun,
     competitor_id: int,
+    competitor_research_id: int | None = None,
 ) -> list[CompetitorEvidence]:
-    competitor_research = _require_competitor_research(db, research_run, competitor_id)
+    competitor_research = _require_competitor_research(
+        db,
+        research_run,
+        competitor_id,
+        competitor_research_id,
+    )
     return competitor_evidence_repository.list_by_competitor_research_id(
         db,
         competitor_research.id,
