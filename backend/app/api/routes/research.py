@@ -12,6 +12,7 @@ from app.schemas.competitor import DiscoveredCompetitorResponse, DiscoveryReques
 from app.schemas.competitor_evidence import CompetitorEvidenceCreate, CompetitorEvidenceResponse
 from app.schemas.competitor_research import CompetitorResearchResponse, CompetitorResearchUpdate
 from app.schemas.competitor_source import CompetitorSourceCreate, CompetitorSourceResponse
+from app.schemas.competitor_discovery_api import CompetitorDiscoveryApiResponse
 from app.schemas.research import (
     CompanyResearchResponse,
     ResearchCreate,
@@ -28,8 +29,11 @@ from app.schemas.research import (
     ResearchUnderstandResponse,
 )
 from app.services import research as research_service
+from app.services.competitor_discovery_run import run_competitor_discovery
 
 router = APIRouter(prefix="/research", tags=["research"])
+
+discovery_router = APIRouter(tags=["competitor-discovery"])
 
 
 def to_response(research_run: ResearchRun) -> ResearchResponse:
@@ -43,6 +47,24 @@ def to_response(research_run: ResearchRun) -> ResearchResponse:
         updated_at=research_run.updated_at,
         completed_at=research_run.completed_at,
         failure_reason=research_run.failure_reason,
+    )
+
+
+@discovery_router.post(
+    "/research-runs/{research_run_id}/competitor-discovery",
+    response_model=CompetitorDiscoveryApiResponse,
+)
+def discover_competitors_from_provider(
+    research_run_id: int,
+    db: Session = Depends(get_db),
+) -> CompetitorDiscoveryApiResponse:
+    try:
+        discovery_run = run_competitor_discovery(db, research_run_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return CompetitorDiscoveryApiResponse(
+        research_run=discovery_run,
+        candidates=discovery_run.candidates,
     )
 
 

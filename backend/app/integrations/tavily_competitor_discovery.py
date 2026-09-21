@@ -25,6 +25,8 @@ TAVILY_TIMEOUT = httpx.Timeout(10.0, connect=5.0, read=10.0, write=10.0, pool=5.
 
 
 class TavilyCompetitorDiscoveryProvider(CompetitorDiscoveryProvider):
+    provider_name = TAVILY_PROVIDER_NAME
+
     def __init__(
         self,
         api_key: str | None = None,
