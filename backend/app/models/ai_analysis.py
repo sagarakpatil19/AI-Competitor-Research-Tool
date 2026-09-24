@@ -53,3 +53,4 @@ class AIAnalysis(Base):
     input_evidence: Mapped[list["AIAnalysisInputEvidence"]] = relationship(back_populates="analysis", cascade="all, delete-orphan")
     statements: Mapped[list["AIStatement"]] = relationship(back_populates="analysis", cascade="all, delete-orphan")
     comparisons: Mapped[list["AIComparison"]] = relationship(back_populates="analysis", cascade="all, delete-orphan")
+    reports: Mapped[list["ResearchReport"]] = relationship(back_populates="analysis")

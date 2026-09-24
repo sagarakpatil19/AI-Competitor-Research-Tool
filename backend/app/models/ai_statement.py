@@ -36,3 +36,4 @@ class AIStatement(Base):
     competitor_research: Mapped["CompetitorResearch | None"] = relationship(back_populates="ai_statements")
     fact_links: Mapped[list["AIStatementFact"]] = relationship(back_populates="statement", cascade="all, delete-orphan")
     evidence_links: Mapped[list["AIStatementEvidence"]] = relationship(back_populates="statement", cascade="all, delete-orphan")
+    report_items: Mapped[list["ResearchReportSectionItem"]] = relationship(back_populates="statement")

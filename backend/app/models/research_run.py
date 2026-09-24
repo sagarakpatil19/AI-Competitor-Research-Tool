@@ -71,3 +71,4 @@ class ResearchRun(Base):
         back_populates="research_run",
         cascade="all, delete-orphan",
     )
+    reports: Mapped[list["ResearchReport"]] = relationship(back_populates="research_run")

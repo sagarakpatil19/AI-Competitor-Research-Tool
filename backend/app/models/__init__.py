@@ -21,6 +21,7 @@ from app.models.competitor_research_section import CompetitorResearchSection
 from app.models.competitor_source import CompetitorSource
 from app.models.project import Project
 from app.models.research_run import ResearchInputType, ResearchRun, ResearchRunStatus
+from app.models.research_report import ResearchReport, ResearchReportSection, ResearchReportSectionItem
 
 __all__ = [
     "Company",
@@ -48,4 +49,7 @@ __all__ = [
     "ResearchInputType",
     "ResearchRun",
     "ResearchRunStatus",
+    "ResearchReport",
+    "ResearchReportSection",
+    "ResearchReportSectionItem",
 ]

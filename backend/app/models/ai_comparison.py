@@ -27,3 +27,4 @@ class AIComparison(Base):
 
     analysis: Mapped["AIAnalysis"] = relationship(back_populates="comparisons")
     competitors: Mapped[list["AIComparisonCompetitor"]] = relationship(back_populates="comparison", cascade="all, delete-orphan")
+    report_items: Mapped[list["ResearchReportSectionItem"]] = relationship(back_populates="comparison")
