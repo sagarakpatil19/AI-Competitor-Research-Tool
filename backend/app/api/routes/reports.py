@@ -40,7 +40,7 @@ def comparison_to_response(comparison: AIComparison) -> ReportComparisonReferenc
         dimension=comparison.dimension,
         statement=comparison.statement,
         support_status=comparison.support_status,
-        competitor_research_ids=[item.competitor_research_id for item in comparison.competitors],
+        competitor_research_ids=sorted(item.competitor_research_id for item in comparison.competitors),
         created_at=comparison.created_at,
     )
 

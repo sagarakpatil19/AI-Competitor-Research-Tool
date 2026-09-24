@@ -4,7 +4,16 @@ import pytest
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
-from app.models import AIAnalysis, AIComparison, AIStatement, Competitor, CompetitorResearch, ResearchReport, ResearchRun
+from app.models import (
+    AIAnalysis,
+    AIComparison,
+    AIComparisonCompetitor,
+    AIStatement,
+    Competitor,
+    CompetitorResearch,
+    ResearchReport,
+    ResearchRun,
+)
 from app.schemas.research_report_api import ResearchReportResponse
 from app.services import research_reports as report_service
 
@@ -211,3 +220,118 @@ def test_cross_run_report_retrieval_is_not_exposed(client):
         f"/api/research-runs/{second_run_id}/reports/{generated['id']}"
     )
     assert response.status_code == 404
+
+
+def test_missing_research_run_returns_not_found_for_report_endpoints(client):
+    missing_run_id = 999999
+
+    generated = client.post(
+        f"/api/research-runs/{missing_run_id}/reports",
+        json={"analysis_id": 999999},
+    )
+    history = client.get(f"/api/research-runs/{missing_run_id}/reports")
+    report = client.get(f"/api/research-runs/{missing_run_id}/reports/999999")
+
+    assert generated.status_code == 404
+    assert history.status_code == 404
+    assert report.status_code == 404
+
+
+def test_missing_report_returns_not_found(client):
+    research_run_id, _ = create_completed_analysis(input_value="M13 missing report")
+
+    response = client.get(f"/api/research-runs/{research_run_id}/reports/999999")
+
+    assert response.status_code == 404
+
+
+def test_empty_report_history_returns_empty_list(client):
+    research_run_id, _ = create_completed_analysis(input_value="M13 empty history")
+
+    response = client.get(f"/api/research-runs/{research_run_id}/reports")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_invalid_generation_body_does_not_create_report(client):
+    research_run_id, _ = create_completed_analysis(input_value="M13 invalid body")
+
+    response = client.post(f"/api/research-runs/{research_run_id}/reports", json={})
+
+    assert response.status_code == 422
+    with SessionLocal() as db:
+        assert db.scalars(select(ResearchReport).where(ResearchReport.research_run_id == research_run_id)).all() == []
+
+
+def test_persisted_failed_report_can_be_retrieved(client):
+    research_run_id, analysis_id = create_completed_analysis(input_value="M13 failed retrieval")
+    with SessionLocal() as db:
+        report = ResearchReport(
+            research_run_id=research_run_id,
+            analysis_id=analysis_id,
+            status="failed",
+            version=1,
+            failure_reason="composition failed permanently",
+        )
+        db.add(report)
+        db.commit()
+        report_id = report.id
+
+    response = client.get(f"/api/research-runs/{research_run_id}/reports/{report_id}")
+
+    assert response.status_code == 200
+    body = ResearchReportResponse.model_validate(response.json())
+    assert body.status == "failed"
+    assert body.failure_reason == "composition failed permanently"
+
+
+def test_comparison_reference_ids_are_sorted_in_api_response(client):
+    research_run_id, analysis_id = create_completed_analysis(input_value="M13 comparison ordering")
+    with SessionLocal() as db:
+        competitors = [
+            Competitor(
+                research_run_id=research_run_id,
+                name=f"Competitor {index}",
+                domain=f"ordering-{index}.example",
+            )
+            for index in range(3)
+        ]
+        db.add_all(competitors)
+        db.flush()
+        executions = [
+            CompetitorResearch(competitor_id=competitor.id, research_run_id=research_run_id)
+            for competitor in competitors
+        ]
+        db.add_all(executions)
+        db.flush()
+        comparison = AIComparison(
+            analysis_id=analysis_id,
+            comparison_type="pricing",
+            dimension="starting_price",
+            statement="Comparison ordering test.",
+            support_status="supported",
+        )
+        db.add(comparison)
+        db.flush()
+        for execution in (executions[2], executions[0], executions[1]):
+            db.add(
+                AIComparisonCompetitor(
+                    comparison_id=comparison.id,
+                    competitor_research_id=execution.id,
+                    role="compared",
+                )
+            )
+        db.commit()
+
+    generated = client.post(
+        f"/api/research-runs/{research_run_id}/reports",
+        json={"analysis_id": analysis_id},
+    )
+
+    assert generated.status_code == 201
+    body = ResearchReportResponse.model_validate(generated.json())
+    comparison_section = next(section for section in body.sections if section.section == "comparisons")
+    assert comparison_section.items[0].comparison.competitor_research_ids == sorted(
+        comparison_section.items[0].comparison.competitor_research_ids
+    )
