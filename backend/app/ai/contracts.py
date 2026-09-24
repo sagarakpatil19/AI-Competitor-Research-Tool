@@ -88,16 +88,21 @@ def validate_provider_result(
         require_ids(statement.source_context_ids, sources, "source")
         if statement.competitor_context_id is not None:
             require_ids([statement.competitor_context_id], competitors, "competitor")
+        referenced_competitors: set[str] = set()
         for fact_id in statement.fact_context_ids:
             fact = facts[fact_id]
+            referenced_competitors.add(fact.competitor_context_id)
             if statement.competitor_context_id and fact.competitor_context_id != statement.competitor_context_id:
                 raise ProviderInvalidOutputError("Statement fact belongs to another competitor context")
         for evidence_id in statement.evidence_context_ids:
             item = evidence[evidence_id]
+            referenced_competitors.add(item.competitor_context_id)
             if statement.competitor_context_id and item.competitor_context_id != statement.competitor_context_id:
                 raise ProviderInvalidOutputError("Statement evidence belongs to another competitor context")
             if item.source_context_id and item.source_context_id not in statement.source_context_ids:
                 raise ProviderInvalidOutputError("Statement evidence source is not referenced")
+        if statement.competitor_context_id is None and len(referenced_competitors) > 1:
+            raise ProviderInvalidOutputError("Statement references multiple competitor contexts")
 
     for comparison in result.comparisons:
         if result.scope != "research_run":
@@ -110,7 +115,15 @@ def validate_provider_result(
             if facts[fact_id].competitor_context_id not in comparison.competitor_context_ids:
                 raise ProviderInvalidOutputError("Comparison fact is outside comparison competitors")
         for evidence_id in comparison.evidence_context_ids:
-            if evidence[evidence_id].competitor_context_id not in comparison.competitor_context_ids:
+            item = evidence[evidence_id]
+            if item.competitor_context_id not in comparison.competitor_context_ids:
                 raise ProviderInvalidOutputError("Comparison evidence is outside comparison competitors")
+            if item.source_context_id and item.source_context_id not in comparison.source_context_ids:
+                raise ProviderInvalidOutputError("Comparison evidence source is not referenced")
+        roles = list(comparison.competitor_roles.values())
+        if roles.count("subject") > 1:
+            raise ProviderInvalidOutputError("Comparison can have at most one subject competitor")
+        if roles.count("baseline") > 1:
+            raise ProviderInvalidOutputError("Comparison can have at most one baseline competitor")
 
     return result

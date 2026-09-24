@@ -182,6 +182,74 @@ def test_valid_references_are_accepted_for_competitor_scope():
     assert result.statements[0].evidence_context_ids == ["EVIDENCE_001"]
 
 
+def test_statement_cannot_mix_fact_and_evidence_from_different_competitors():
+    context = make_context("research_run")
+    statement = AIStatementResult(
+        statement_id="STATEMENT_001",
+        statement_type="observation",
+        text="Mixed competitor references.",
+        support_status="supported",
+        fact_context_ids=["FACT_001"],
+        evidence_context_ids=["EVIDENCE_002"],
+        source_context_ids=["SOURCE_002"],
+    )
+
+    with pytest.raises(ProviderInvalidOutputError, match="multiple competitor contexts"):
+        validate_provider_result(
+            context,
+            ProviderAnalysisResult(
+                scope="research_run",
+                provider="fake-provider",
+                model="fake-model",
+                statements=[statement],
+            ),
+        )
+
+
+def test_comparison_requires_cited_evidence_sources_and_unique_roles():
+    context = make_context("research_run")
+    comparison = AIComparisonResult(
+        comparison_id="COMPARISON_001",
+        comparison_type="pricing",
+        dimension="starting_price",
+        statement="Invalid comparison provenance.",
+        support_status="supported",
+        competitor_context_ids=["COMPETITOR_001", "COMPETITOR_002"],
+        evidence_context_ids=["EVIDENCE_001"],
+        source_context_ids=["SOURCE_001"],
+        competitor_roles={
+            "COMPETITOR_001": "subject",
+            "COMPETITOR_002": "subject",
+        },
+    )
+
+    with pytest.raises(ProviderInvalidOutputError, match="at most one subject"):
+        validate_provider_result(
+            context,
+            ProviderAnalysisResult(
+                scope="research_run",
+                provider="fake-provider",
+                model="fake-model",
+                comparisons=[comparison],
+            ),
+        )
+
+    source_missing = comparison.model_copy(update={
+        "competitor_roles": {},
+        "source_context_ids": [],
+    })
+    with pytest.raises(ProviderInvalidOutputError, match="source is not referenced"):
+        validate_provider_result(
+            context,
+            ProviderAnalysisResult(
+                scope="research_run",
+                provider="fake-provider",
+                model="fake-model",
+                comparisons=[source_missing],
+            ),
+        )
+
+
 def test_research_run_scope_can_represent_comparisons():
     context = make_context("research_run")
     result = ProviderAnalysisResult(
