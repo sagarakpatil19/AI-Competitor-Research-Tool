@@ -50,6 +50,32 @@ def create_report(db: Session, data: ResearchReportCreate) -> ResearchReport:
     return report_repository.create_report(db, report)
 
 
+def generate_report(
+    db: Session,
+    *,
+    research_run_id: int,
+    analysis_id: int,
+) -> ResearchReport:
+    analysis = db.get(AIAnalysis, analysis_id)
+    if analysis is None:
+        raise LookupError("AI analysis not found")
+    if analysis.research_run_id != research_run_id:
+        raise ValueError("AI analysis must belong to the research run")
+    if analysis.scope != "research_run":
+        raise ValueError("Reports require a research-run-scoped AI analysis")
+    if analysis.status != "completed":
+        raise ValueError("Reports require a completed AI analysis")
+
+    report = create_report(
+        db,
+        ResearchReportCreate(
+            research_run_id=research_run_id,
+            analysis_id=analysis_id,
+        ),
+    )
+    return compose_report(db, report.id)
+
+
 def create_report_section(
     db: Session,
     data: ResearchReportSectionCreate,

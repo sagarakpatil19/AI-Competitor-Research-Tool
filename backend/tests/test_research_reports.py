@@ -27,7 +27,9 @@ from app.services.research_reports import (
     create_report,
     create_report_section,
     create_report_section_item,
+    generate_report,
 )
+from app.services import research_reports as research_reports_service
 
 
 @pytest.fixture()
@@ -445,3 +447,99 @@ def test_compose_report_rejects_invalid_analysis_ownership_and_status(db: Sessio
         with pytest.raises(ValueError):
             compose_report(db, report.id)
         assert db.get(ResearchReport, report.id).status == "pending"
+
+
+def test_generate_report_composes_the_explicit_completed_analysis(db: Session):
+    context = make_report_context(db)
+    context["first_statement"].section = "pricing"
+    db.commit()
+
+    report = generate_report(
+        db,
+        research_run_id=context["first_run"].id,
+        analysis_id=context["first_analysis"].id,
+    )
+
+    assert report.status == "completed"
+    assert report.research_run_id == context["first_run"].id
+    assert report.analysis_id == context["first_analysis"].id
+    assert report.version == 1
+    sections = {section.section: section for section in report.sections}
+    assert [item.ai_statement_id for item in sections["pricing"].items] == [context["first_statement"].id]
+
+
+def test_generate_report_rejects_invalid_analysis_before_creating_report(db: Session):
+    context = make_report_context(db)
+    initial_count = db.query(ResearchReport).count()
+
+    invalid_cases = (
+        (context["first_run"].id, 999999, "AI analysis not found"),
+        (context["second_run"].id, context["first_analysis"].id, "belong to the research run"),
+        (context["first_run"].id, context["competitor_analysis"].id, "research-run-scoped"),
+        (context["first_run"].id, context["pending_analysis"].id, "completed"),
+        (context["first_run"].id, context["failed_analysis"].id, "completed"),
+    )
+    for research_run_id, analysis_id, message in invalid_cases:
+        with pytest.raises((LookupError, ValueError), match=message):
+            generate_report(
+                db,
+                research_run_id=research_run_id,
+                analysis_id=analysis_id,
+            )
+
+    assert db.query(ResearchReport).count() == initial_count
+
+
+def test_generate_report_creates_historical_version_for_each_explicit_run(db: Session):
+    context = make_report_context(db)
+
+    first = generate_report(
+        db,
+        research_run_id=context["first_run"].id,
+        analysis_id=context["first_analysis"].id,
+    )
+    second = generate_report(
+        db,
+        research_run_id=context["first_run"].id,
+        analysis_id=context["first_analysis"].id,
+    )
+
+    assert first.id != second.id
+    assert first.version == 1
+    assert second.version == 2
+    assert first.status == "completed"
+    assert second.status == "completed"
+
+
+def test_generate_report_preserves_composition_failure_handling(db: Session, monkeypatch):
+    context = make_report_context(db)
+    analysis_id = context["first_analysis"].id
+    original_compose = compose_report
+
+    def fail_during_composition(session, report_id):
+        original_add_all = session.add_all
+        failed = False
+
+        def fail_once(*args, **kwargs):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise RuntimeError("composition failed")
+            return original_add_all(*args, **kwargs)
+
+        monkeypatch.setattr(session, "add_all", fail_once)
+        return original_compose(session, report_id)
+
+    monkeypatch.setattr(research_reports_service, "compose_report", fail_during_composition)
+
+    report = generate_report(
+        db,
+        research_run_id=context["first_run"].id,
+        analysis_id=analysis_id,
+    )
+
+    reports = db.query(ResearchReport).all()
+    assert len(reports) == 1
+    assert report.status == "failed"
+    assert reports[0].status == "failed"
+    assert "composition failed" in reports[0].failure_reason
