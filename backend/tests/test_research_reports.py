@@ -22,6 +22,8 @@ from app.schemas.research_report import (
     ResearchReportSectionItemCreate,
 )
 from app.services.research_reports import (
+    REPORT_SECTIONS,
+    compose_report,
     create_report,
     create_report_section,
     create_report_section_item,
@@ -312,3 +314,134 @@ def test_report_metadata_and_migration_tables_are_present(db: Session):
         constraint["name"]
         for constraint in inspect(db.bind).get_unique_constraints("research_reports")
     }
+
+
+def test_compose_report_creates_all_sections_and_preserves_m12_references(db: Session):
+    context = make_report_context(db)
+    context["first_statement"].section = "pricing"
+    null_section_statement = AIStatement(
+        analysis_id=context["first_analysis"].id,
+        statement_type="observation",
+        text="Unsectioned finding.",
+        support_status="supported",
+    )
+    unmapped_statement = AIStatement(
+        analysis_id=context["first_analysis"].id,
+        statement_type="observation",
+        text="Unsupported section finding.",
+        support_status="supported",
+        section="not_a_report_section",
+    )
+    db.add_all([null_section_statement, unmapped_statement])
+    db.commit()
+    report = create_first_report(db, context)
+
+    composed = compose_report(db, report.id)
+
+    assert composed.status == "completed"
+    assert [section.section for section in composed.sections] == list(REPORT_SECTIONS)
+    sections = {section.section: section for section in composed.sections}
+    assert sections["pricing"].status == "completed"
+    assert sections["comparisons"].status == "completed"
+    assert sections["key_findings"].status == "no_content"
+    assert sections["company_overview"].status == "no_content"
+    assert [item.ai_statement_id for item in sections["pricing"].items] == [context["first_statement"].id]
+    assert [item.ai_comparison_id for item in sections["comparisons"].items] == [context["first_comparison"].id]
+    assert all(item.ai_statement_id != null_section_statement.id for item in sections["pricing"].items)
+    assert all(item.ai_statement_id != unmapped_statement.id for item in sections["pricing"].items)
+
+
+def test_compose_report_orders_statements_and_comparisons_deterministically(db: Session):
+    context = make_report_context(db)
+    first_statement = context["first_statement"]
+    first_statement.section = "products"
+    second_statement = AIStatement(
+        analysis_id=context["first_analysis"].id,
+        statement_type="observation",
+        text="Later finding.",
+        support_status="supported",
+        section="products",
+    )
+    second_comparison = AIComparison(
+        analysis_id=context["first_analysis"].id,
+        comparison_type="features",
+        dimension="feature",
+        statement="Later comparison.",
+        support_status="supported",
+    )
+    db.add_all([second_statement, second_comparison])
+    db.commit()
+    report = create_first_report(db, context)
+
+    composed = compose_report(db, report.id)
+    sections = {section.section: section for section in composed.sections}
+
+    assert [item.ai_statement_id for item in sections["products"].items] == [first_statement.id, second_statement.id]
+    assert [item.ai_comparison_id for item in sections["comparisons"].items] == [context["first_comparison"].id, second_comparison.id]
+    assert [section.display_order for section in composed.sections] == list(range(8))
+
+
+def test_compose_report_rejects_recomposition_and_does_not_duplicate_items(db: Session):
+    context = make_report_context(db)
+    context["first_statement"].section = "pricing"
+    db.commit()
+    report = create_first_report(db, context)
+    compose_report(db, report.id)
+    item_count = db.query(ResearchReportSectionItem).count()
+
+    with pytest.raises(ValueError, match="Only pending"):
+        compose_report(db, report.id)
+
+    assert db.query(ResearchReportSectionItem).count() == item_count
+
+
+def test_compose_report_returns_failed_report_without_partial_sections_on_failure(db: Session, monkeypatch):
+    context = make_report_context(db)
+    report = create_first_report(db, context)
+    original_flush = db.flush
+    flush_count = 0
+
+    def fail_after_sections(*args, **kwargs):
+        nonlocal flush_count
+        flush_count += 1
+        if flush_count == 2:
+            raise RuntimeError("section composition failed")
+        return original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(db, "flush", fail_after_sections)
+
+    failed = compose_report(db, report.id)
+
+    assert failed.status == "failed"
+    assert "section composition failed" in failed.failure_reason
+    assert db.query(ResearchReportSection).filter_by(report_id=report.id).count() == 0
+    assert db.query(ResearchReportSectionItem).count() == 0
+
+
+def test_compose_report_rejects_invalid_analysis_ownership_and_status(db: Session):
+    context = make_report_context(db)
+    cross_run_report = ResearchReport(
+        research_run_id=context["first_run"].id,
+        analysis_id=context["second_analysis"].id,
+        status="pending",
+        version=99,
+    )
+    db.add(cross_run_report)
+    db.commit()
+
+    with pytest.raises(ValueError, match="belong to the report research run"):
+        compose_report(db, cross_run_report.id)
+    assert db.get(ResearchReport, cross_run_report.id).status == "pending"
+
+    for version, key in enumerate(("competitor_analysis", "failed_analysis", "pending_analysis"), start=100):
+        report = ResearchReport(
+            research_run_id=context["first_run"].id,
+            analysis_id=context[key].id,
+            status="pending",
+            version=version,
+        )
+        db.add(report)
+        db.commit()
+        with pytest.raises(ValueError):
+            compose_report(db, report.id)
+        assert db.get(ResearchReport, report.id).status == "pending"

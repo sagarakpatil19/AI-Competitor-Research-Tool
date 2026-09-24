@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.ai_analysis import AIAnalysis
@@ -118,3 +119,99 @@ def complete_report(db: Session, report_id: int) -> ResearchReport:
     report.status = "completed"
     report.completed_at = datetime.now(timezone.utc)
     return report_repository.save_report(db, report)
+
+
+def compose_report(db: Session, report_id: int) -> ResearchReport:
+    report = report_repository.get_report(db, report_id)
+    if report is None:
+        raise LookupError("Research report not found")
+    if report.status != "pending":
+        raise ValueError("Only pending research reports can be composed")
+
+    analysis = db.get(AIAnalysis, report.analysis_id)
+    if analysis is None:
+        raise LookupError("AI analysis not found")
+    if analysis.research_run_id != report.research_run_id:
+        raise ValueError("AI analysis must belong to the report research run")
+    if analysis.scope != "research_run":
+        raise ValueError("Reports require a research-run-scoped AI analysis")
+    if analysis.status != "completed":
+        raise ValueError("Reports require a completed AI analysis")
+
+    try:
+        report.status = "running"
+        db.flush()
+        statements = list(
+            db.scalars(
+                select(AIStatement)
+                .where(AIStatement.analysis_id == analysis.id)
+                .order_by(AIStatement.created_at.asc(), AIStatement.id.asc())
+            ).all()
+        )
+        comparisons = list(
+            db.scalars(
+                select(AIComparison)
+                .where(AIComparison.analysis_id == analysis.id)
+                .order_by(AIComparison.created_at.asc(), AIComparison.id.asc())
+            ).all()
+        )
+
+        sections_by_name: dict[str, ResearchReportSection] = {}
+        for display_order, section_name in enumerate(REPORT_SECTIONS):
+            section = ResearchReportSection(
+                report_id=report.id,
+                section=section_name,
+                status="no_content",
+                display_order=display_order,
+            )
+            db.add(section)
+            sections_by_name[section_name] = section
+        db.flush()
+
+        items_by_section: dict[str, list[ResearchReportSectionItem]] = {
+            section_name: [] for section_name in REPORT_SECTIONS
+        }
+        for statement in statements:
+            if statement.section not in sections_by_name:
+                continue
+            items_by_section[statement.section].append(
+                ResearchReportSectionItem(
+                    section=sections_by_name[statement.section],
+                    item_type="statement",
+                    ai_statement_id=statement.id,
+                    display_order=len(items_by_section[statement.section]),
+                )
+            )
+
+        for comparison in comparisons:
+            items_by_section["comparisons"].append(
+                ResearchReportSectionItem(
+                    section=sections_by_name["comparisons"],
+                    item_type="comparison",
+                    ai_comparison_id=comparison.id,
+                    display_order=len(items_by_section["comparisons"]),
+                )
+            )
+
+        for section_name, items in items_by_section.items():
+            section = sections_by_name[section_name]
+            if items:
+                section.status = "completed"
+                db.add_all(items)
+
+        report.status = "completed"
+        report.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(report)
+        return report
+    except Exception as exc:
+        failure_reason = str(exc)[:1000]
+        db.rollback()
+        failed_report = db.get(ResearchReport, report_id)
+        if failed_report is None:
+            raise
+        failed_report.status = "failed"
+        failed_report.failure_reason = failure_reason
+        db.commit()
+        db.refresh(failed_report)
+        return failed_report
