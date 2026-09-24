@@ -42,9 +42,7 @@ class GeminiProvider:
             return validate_provider_result(context, result)
         except ProviderInvalidOutputError:
             raise
-        except ValidationError as exc:
-            raise ProviderInvalidOutputError("Gemini returned invalid structured output") from exc
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (TypeError, ValueError, ValidationError) as exc:
             raise ProviderInvalidOutputError("Gemini returned invalid structured output") from exc
 
     def _get_client(self) -> Any:
@@ -72,16 +70,37 @@ class GeminiProvider:
 
     @staticmethod
     def _parse_response(response: Any) -> ProviderAnalysisResult:
+        if response is None:
+            raise ProviderInvalidOutputError("Gemini returned no structured output")
+
         parsed = getattr(response, "parsed", None)
         if parsed is not None:
             if isinstance(parsed, ProviderAnalysisResult):
                 return parsed
-            return ProviderAnalysisResult.model_validate(parsed)
+            try:
+                return ProviderAnalysisResult.model_validate(parsed)
+            except (TypeError, ValueError, ValidationError) as exc:
+                raise ProviderInvalidOutputError("Gemini returned invalid structured output") from exc
 
         text = getattr(response, "text", None)
-        if not isinstance(text, str) or not text.strip():
+        if not isinstance(text, str):
             raise ProviderInvalidOutputError("Gemini returned no structured output")
-        return ProviderAnalysisResult.model_validate_json(text)
+        normalized_text = text.strip()
+        if not normalized_text:
+            raise ProviderInvalidOutputError("Gemini returned no structured output")
+
+        try:
+            payload = json.loads(normalized_text)
+        except json.JSONDecodeError as exc:
+            raise ProviderInvalidOutputError("Gemini returned invalid structured output") from exc
+
+        if payload is None:
+            raise ProviderInvalidOutputError("Gemini returned no structured output")
+
+        try:
+            return ProviderAnalysisResult.model_validate(payload)
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise ProviderInvalidOutputError("Gemini returned invalid structured output") from exc
 
     @staticmethod
     def _build_instruction(context: AnalysisContext) -> str:
@@ -101,14 +120,21 @@ class GeminiProvider:
             f"Analysis context:\n{serialized_context}"
         )
 
-    @staticmethod
-    def _map_provider_error(error: Exception) -> Exception:
+    def _map_provider_error(self, error: Exception) -> Exception:
         error_type = type(error).__name__.lower()
-        error_text = str(error).lower()
+        sanitized_error = self._redact_secret(str(error), self.config.api_key)
+        error_text = sanitized_error.lower()
+
         if "timeout" in error_type or "timeout" in error_text:
             return ProviderTimeoutError("Gemini request timed out")
-        if any(term in error_type or term in error_text for term in ("auth", "api key", "permission", "unauthorized")):
+        if any(term in error_type or term in error_text for term in ("auth", "api key", "permission", "unauthorized", "forbidden", "credentials")):
             return ProviderUnavailableError("Gemini authentication or configuration failed")
-        if any(term in error_type or term in error_text for term in ("rate", "quota", "unavailable", "serviceunavailable")):
+        if any(term in error_type or term in error_text for term in ("rate", "quota", "unavailable", "serviceunavailable", "429", "503")):
             return ProviderUnavailableError("Gemini provider is unavailable")
         return ProviderResponseError("Gemini provider request failed")
+
+    @staticmethod
+    def _redact_secret(message: str, secret: str | None) -> str:
+        if not message or not secret:
+            return message
+        return message.replace(secret, "[REDACTED]")

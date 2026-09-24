@@ -188,6 +188,36 @@ def test_invalid_structured_response_is_rejected():
         provider.analyze(make_context())
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        FakeResponse(text="   "),
+        FakeResponse(text=None),
+        FakeResponse(parsed=None, text=None),
+        FakeResponse(parsed={"scope": "competitor", "model": "m"}, text='{"scope": "competitor", "model": "m"}'),
+        FakeResponse(parsed={"scope": "competitor", "provider": "gemini"}, text='{"scope": "competitor", "provider": "gemini"}'),
+        FakeResponse(parsed={"provider": "gemini", "model": "m"}, text='{"provider": "gemini", "model": "m"}'),
+    ],
+)
+def test_empty_or_invalid_structured_payloads_are_rejected(response):
+    client = FakeClient(response=response)
+    provider = GeminiProvider(config=GeminiProviderConfig(api_key="test-key"), client=client)
+
+    with pytest.raises(ProviderInvalidOutputError):
+        provider.analyze(make_context())
+
+
+def test_provider_error_messages_do_not_expose_the_api_key():
+    secret = "super-secret-key"
+    client = FakeClient(error=RuntimeError(f"API key {secret} rejected by Gemini"))
+    provider = GeminiProvider(config=GeminiProviderConfig(api_key=secret), client=client)
+
+    with pytest.raises(ProviderUnavailableError) as error:
+        provider.analyze(make_context())
+
+    assert secret not in str(error.value)
+
+
 def test_timeout_and_provider_failures_are_mapped():
     class FakeTimeoutError(Exception):
         pass
