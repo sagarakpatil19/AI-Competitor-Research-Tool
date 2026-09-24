@@ -9,6 +9,7 @@ from app.models.ai_analysis import AIAnalysis
 from app.models.ai_comparison import AIComparison
 from app.models.ai_statement import AIStatement
 from app.models.research_report import ResearchReport, ResearchReportSection, ResearchReportSectionItem
+from app.repositories import research_runs as research_run_repository
 from app.repositories import research_reports as report_repository
 from app.schemas.research_report import (
     ResearchReportCreate,
@@ -74,6 +75,25 @@ def generate_report(
         ),
     )
     return compose_report(db, report.id)
+
+
+def get_report_for_research_run(
+    db: Session,
+    research_run_id: int,
+    report_id: int,
+) -> ResearchReport:
+    if research_run_repository.get_research_run(db, research_run_id) is None:
+        raise LookupError("Research run not found")
+    report = report_repository.get_report_for_research_run(db, research_run_id, report_id)
+    if report is None:
+        raise LookupError("Research report not found")
+    return report
+
+
+def list_reports_for_research_run(db: Session, research_run_id: int) -> list[ResearchReport]:
+    if research_run_repository.get_research_run(db, research_run_id) is None:
+        raise LookupError("Research run not found")
+    return report_repository.list_by_research_run_id(db, research_run_id)
 
 
 def create_report_section(
