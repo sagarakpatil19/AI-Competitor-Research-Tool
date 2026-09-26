@@ -236,8 +236,10 @@ def test_discovery_api_returns_structured_candidates_without_provider_configurat
         f"/api/research-runs/{research_run['research_id']}/competitor-discovery"
     )
 
-    assert response.status_code == 200
-    body = response.json()
+    assert response.status_code == 202
+    submission = response.json()
+    assert submission["status"] == "queued"
+    body = client.get(submission["status_url"]).json()["result"]
     assert set(body) == {"research_run", "candidates"}
     assert body["research_run"]["provider_name"] == "fake"
     assert body["candidates"][0]["domain"] == "slack.com"
@@ -264,8 +266,10 @@ def test_discovery_api_provider_failure_returns_failed_run_without_raw_error(
         f"/api/research-runs/{research_run['research_id']}/competitor-discovery"
     )
 
-    assert response.status_code == 200
-    body = response.json()["research_run"]
+    assert response.status_code == 202
+    operation = client.get(response.json()["status_url"]).json()
+    assert operation["status"] == "completed"
+    body = operation["result"]["research_run"]
     assert body["status"] == "failed"
     assert body["failure_category"] == "rate_limit"
     assert body["failure_reason"] == "Discovery provider rate limit exceeded"
@@ -291,7 +295,8 @@ def test_discovery_api_does_not_accept_client_provider_configuration(
         json={"provider": "attacker", "api_key": "client-secret"},
     )
 
-    assert response.status_code == 200
-    body = response.json()
+    assert response.status_code == 202
+    operation = client.get(response.json()["status_url"]).json()
+    body = operation["result"]
     assert body["research_run"]["provider_name"] == "fake"
     assert "client-secret" not in response.text

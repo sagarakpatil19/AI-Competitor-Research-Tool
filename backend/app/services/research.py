@@ -187,6 +187,19 @@ def research_competitors(
     research_run: ResearchRun,
     competitor_ids: list[int],
 ) -> list[CompetitorResearch]:
+    unique_ids = validate_research_competitors(db, research_run, competitor_ids)
+
+    results: list[CompetitorResearch] = []
+    for competitor_id in unique_ids:
+        results.append(create_competitor_research_execution(db, research_run, competitor_id))
+    return results
+
+
+def validate_research_competitors(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_ids: list[int],
+) -> list[int]:
     if research_run.input_type is None or research_run.status != ResearchRunStatus.RESOLVING:
         raise ValueError("Research input must be resolved before competitor research")
 
@@ -200,11 +213,7 @@ def research_competitors(
         raise ValueError("All competitor IDs must exist")
     if any(competitor.research_run_id != research_run.id for competitor in competitors):
         raise ValueError("All competitors must belong to the research run")
-
-    results: list[CompetitorResearch] = []
-    for competitor_id in unique_ids:
-        results.append(create_competitor_research_execution(db, research_run, competitor_id))
-    return results
+    return unique_ids
 
 
 def get_competitor_research_execution(
@@ -549,17 +558,13 @@ def collect_competitor_source(
     source_id: int,
     competitor_research_id: int | None = None,
 ) -> tuple[CompetitorSource, CompetitorEvidence]:
-    competitor_research = _require_competitor_research(
+    competitor_research, source = get_source_collection_target(
         db,
         research_run,
         competitor_id,
+        source_id,
         competitor_research_id,
     )
-    source = competitor_source_repository.get_source(db, source_id)
-    if source is None:
-        raise ValueError("Source not found")
-    if source.competitor_research_id != competitor_research.id:
-        raise ValueError("Source must belong to the competitor research")
 
     start_competitor_research_collection(db, research_run, competitor_research.id)
 
@@ -619,6 +624,27 @@ def collect_competitor_source(
         evidence = competitor_evidence_repository.save_evidence(db, evidence)
 
     return source, process_competitor_evidence(db, research_run, competitor_id, evidence.id)
+
+
+def get_source_collection_target(
+    db: Session,
+    research_run: ResearchRun,
+    competitor_id: int,
+    source_id: int,
+    competitor_research_id: int | None = None,
+) -> tuple[CompetitorResearch, CompetitorSource]:
+    competitor_research = _require_competitor_research(
+        db,
+        research_run,
+        competitor_id,
+        competitor_research_id,
+    )
+    source = competitor_source_repository.get_source(db, source_id)
+    if source is None:
+        raise ValueError("Source not found")
+    if source.competitor_research_id != competitor_research.id:
+        raise ValueError("Source must belong to the competitor research")
+    return competitor_research, source
 
 
 def list_competitor_evidence(

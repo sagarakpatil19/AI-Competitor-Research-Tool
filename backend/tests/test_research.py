@@ -161,6 +161,13 @@ def resolve_and_understand(client, company="Notion"):
     return created
 
 
+def completed_background_operation(client, submission):
+    assert submission.status_code == 202
+    operation = client.get(submission.json()["status_url"])
+    assert operation.status_code == 200
+    return operation.json()
+
+
 def test_discover_competitors_creates_foundation(client):
     research = resolve_and_understand(client)
 
@@ -312,16 +319,16 @@ def test_research_competitors_creates_foundations(client):
         json={"competitor_ids": competitor_ids},
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["research"]["research_id"] == research["research_id"]
-    assert body["research"]["status"] == "resolving"
-    assert [item["competitor_id"] for item in body["competitor_research"]] == competitor_ids
-    assert all(item["description"] is None for item in body["competitor_research"])
-    assert all(item["industry"] is None for item in body["competitor_research"])
-    assert all(item["products_services"] is None for item in body["competitor_research"])
-    assert all(item["target_customers"] is None for item in body["competitor_research"])
-    assert all(item["business_model"] is None for item in body["competitor_research"])
+    body = completed_background_operation(client, response)
+    assert body["research_run_id"] == research["research_id"]
+    assert body["operation"] == "competitor_research"
+    assert body["status"] == "completed"
+    assert [item["competitor_id"] for item in body["result"]["competitor_research"]] == competitor_ids
+    assert all(item["description"] is None for item in body["result"]["competitor_research"])
+    assert all(item["industry"] is None for item in body["result"]["competitor_research"])
+    assert all(item["products_services"] is None for item in body["result"]["competitor_research"])
+    assert all(item["target_customers"] is None for item in body["result"]["competitor_research"])
+    assert all(item["business_model"] is None for item in body["result"]["competitor_research"])
 
 
 def test_research_competitors_deduplicates_ids(client):
@@ -337,11 +344,11 @@ def test_research_competitors_deduplicates_ids(client):
         json={"competitor_ids": [competitor_id, competitor_id]},
     )
 
-    assert response.status_code == 200
-    assert len(response.json()["competitor_research"]) == 1
+    operation = completed_background_operation(client, response)
+    assert len(operation["result"]["competitor_research"]) == 1
 
 
-def test_research_competitors_creates_new_execution_for_repeated_call(client):
+def test_duplicate_research_command_returns_existing_execution(client):
     research = resolve_and_understand(client)
     discovered = client.post(
         f"/api/research/{research['research_id']}/discover",
@@ -350,11 +357,14 @@ def test_research_competitors_creates_new_execution_for_repeated_call(client):
     competitor_id = discovered["competitors"][0]["id"]
     endpoint = f"/api/research/{research['research_id']}/research"
 
-    first = client.post(endpoint, json={"competitor_ids": [competitor_id]}).json()
-    second = client.post(endpoint, json={"competitor_ids": [competitor_id]}).json()
+    first_submission = client.post(endpoint, json={"competitor_ids": [competitor_id]})
+    first = completed_background_operation(client, first_submission)
+    second_submission = client.post(endpoint, json={"competitor_ids": [competitor_id]})
+    second = completed_background_operation(client, second_submission)
 
-    assert second["competitor_research"][0]["id"] != first["competitor_research"][0]["id"]
-    assert second["competitor_research"][0]["competitor_id"] == competitor_id
+    assert second["logical_id"] == first["logical_id"]
+    assert second["result"]["competitor_research"][0]["id"] == first["result"]["competitor_research"][0]["id"]
+    assert second["result"]["competitor_research"][0]["competitor_id"] == competitor_id
 
 
 def test_research_competitors_rejects_empty_ids(client):
@@ -437,12 +447,12 @@ def create_competitor_research_foundation(client, company="Notion"):
         json={"competitors": [{"name": "Slack", "domain": "slack.com"}]},
     ).json()
     competitor_id = discovered["competitors"][0]["id"]
-    researched = client.post(
+    researched_submission = client.post(
         f"/api/research/{research['research_id']}/research",
         json={"competitor_ids": [competitor_id]},
     )
-    assert researched.status_code == 200
-    foundation = researched.json()["competitor_research"][0]
+    researched = completed_background_operation(client, researched_submission)
+    foundation = researched["result"]["competitor_research"][0]
     return research, competitor_id, foundation
 
 
@@ -816,10 +826,11 @@ def test_processing_marks_invalid_source_relationship(client):
         },
     ).json()
     competitor_ids = [item["id"] for item in discovered["competitors"]]
-    foundations = client.post(
+    foundation_submission = client.post(
         f"/api/research/{research['research_id']}/research",
         json={"competitor_ids": competitor_ids},
-    ).json()["competitor_research"]
+    )
+    foundations = completed_background_operation(client, foundation_submission)["result"]["competitor_research"]
     source_endpoint = f"/api/research/{research['research_id']}/competitors/{competitor_ids[1]}/research/sources"
     source = client.post(source_endpoint, json={"source_url": "https://example.com"}).json()["source"]
     db = SessionLocal()
@@ -1077,16 +1088,15 @@ def test_collect_source_creates_evidence_and_updates_state(client, monkeypatch):
         f"{endpoint}/{registered['id']}/collect"
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["research"]["status"] == "resolving"
-    assert body["source"]["status"] == "collected"
-    assert body["source"]["attempt_count"] == 1
-    assert body["source"]["last_http_status"] == 200
-    assert body["source"]["content_hash"] == "a" * 64
-    assert body["evidence"]["source_id"] == registered["id"]
-    assert body["evidence"]["competitor_research_id"] == foundation["id"]
-    assert body["evidence"]["content"] == "Example collected content"
+    body = completed_background_operation(client, response)
+    assert body["operation"] == "source_collection"
+    assert body["result"]["source"]["status"] == "collected"
+    assert body["result"]["source"]["attempt_count"] == 1
+    assert body["result"]["source"]["last_http_status"] == 200
+    assert body["result"]["source"]["content_hash"] == "a" * 64
+    assert body["result"]["evidence"]["source_id"] == registered["id"]
+    assert body["result"]["evidence"]["competitor_research_id"] == foundation["id"]
+    assert body["result"]["evidence"]["content"] == "Example collected content"
     assert competitor_id
 
 
@@ -1099,9 +1109,10 @@ def test_repeated_identical_source_collection_reuses_evidence(client, monkeypatc
     first = client.post(collect_endpoint)
     second = client.post(collect_endpoint)
 
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert first.json()["evidence"]["id"] == second.json()["evidence"]["id"]
+    first_operation = completed_background_operation(client, first)
+    second_operation = completed_background_operation(client, second)
+    assert first_operation["logical_id"] == second_operation["logical_id"]
+    assert first_operation["result"]["evidence"]["id"] == second_operation["result"]["evidence"]["id"]
     db = SessionLocal()
     try:
         evidence = list(
@@ -1117,7 +1128,7 @@ def test_repeated_identical_source_collection_reuses_evidence(client, monkeypatc
     assert competitor_id
 
 
-def test_changed_source_content_reprocesses_existing_evidence(client, monkeypatch):
+def test_duplicate_source_collection_returns_existing_domain_result(client, monkeypatch):
     _, _, _, endpoint = create_source_foundation(client)
     registered = client.post(endpoint, json={"source_url": "https://example.com/article"}).json()["source"]
 
@@ -1138,12 +1149,12 @@ def test_changed_source_content_reprocesses_existing_evidence(client, monkeypatc
     retriever = ChangingRetriever()
     monkeypatch.setattr(research_service, "source_retriever", retriever)
     collect_endpoint = f"{endpoint}/{registered['id']}/collect"
-    first = client.post(collect_endpoint).json()["evidence"]
+    first = completed_background_operation(client, client.post(collect_endpoint))["result"]["evidence"]
     retriever.content = "Changed source content that is also sufficiently meaningful for validation."
-    second = client.post(collect_endpoint).json()["evidence"]
+    second = completed_background_operation(client, client.post(collect_endpoint))["result"]["evidence"]
 
     assert first["id"] == second["id"]
-    assert second["content"] != first["content"]
+    assert second["content"] == first["content"]
     assert second["processing_status"] == "processed"
     assert second["validation_status"] == "valid"
 
@@ -1174,8 +1185,10 @@ def test_collect_source_failure_persists_failed_state_without_evidence(client, m
     monkeypatch.setattr(research_service, "source_retriever", FailedRetriever())
     response = client.post(f"{endpoint}/{registered['id']}/collect")
 
-    assert response.status_code == 502
-    assert response.json()["detail"] == "Source request timed out"
+    assert response.status_code == 202
+    operation = client.get(response.json()["status_url"]).json()
+    assert operation["status"] == "failed"
+    assert operation["failure_reason"] == "Source request timed out"
 
     db = SessionLocal()
     try:
@@ -1215,7 +1228,9 @@ def test_collect_source_persists_http_failure_state(client, monkeypatch, status_
     monkeypatch.setattr(research_service, "source_retriever", HttpFailureRetriever())
     response = client.post(f"{endpoint}/{registered['id']}/collect")
 
-    assert response.status_code == 502
+    assert response.status_code == 202
+    operation = client.get(response.json()["status_url"]).json()
+    assert operation["status"] == "failed"
     db = SessionLocal()
     try:
         source = db.get(CompetitorSource, registered["id"])
@@ -1249,7 +1264,9 @@ def test_collect_source_persists_unsupported_content_failure(client, monkeypatch
     monkeypatch.setattr(research_service, "source_retriever", UnsupportedContentRetriever())
     response = client.post(f"{endpoint}/{registered['id']}/collect")
 
-    assert response.status_code == 422
+    assert response.status_code == 202
+    operation = client.get(response.json()["status_url"]).json()
+    assert operation["status"] == "failed"
     db = SessionLocal()
     try:
         source = db.get(CompetitorSource, registered["id"])

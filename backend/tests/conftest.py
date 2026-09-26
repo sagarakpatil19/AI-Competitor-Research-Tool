@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.background.runtime import BackgroundRuntime
 from app.db.session import get_db
 from app.main import app
 
@@ -37,8 +38,11 @@ def client():
         finally:
             db.close()
 
+    previous_runtime = app.state.background_runtime
+    app.state.background_runtime = BackgroundRuntime(TestingSessionLocal)
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+    app.state.background_runtime = previous_runtime
     engine.dispose()

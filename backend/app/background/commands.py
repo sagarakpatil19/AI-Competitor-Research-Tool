@@ -90,7 +90,7 @@ class CompetitorResearchCommand(BackgroundCommand):
         return {
             "command_type": self.command_type,
             "research_run_id": self.research_run_id,
-            "competitor_ids": list(dict.fromkeys(self.competitor_ids)),
+            "competitor_ids": sorted(set(self.competitor_ids)),
         }
 
 
@@ -157,5 +157,5 @@ class AIAnalysisCommand(BackgroundCommand):
         if self.scope == "competitor":
             payload["competitor_research_id"] = self.competitor_research_id
         else:
-            payload["competitor_research_ids"] = list(dict.fromkeys(self.competitor_research_ids or []))
+            payload["competitor_research_ids"] = sorted(set(self.competitor_research_ids or []))
         return payload

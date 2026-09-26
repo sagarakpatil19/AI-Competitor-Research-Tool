@@ -258,6 +258,37 @@ def test_background_command_logical_id_is_stable_across_retries():
     assert command_a.logical_id == command_a.with_retry_attempt(3).logical_id
 
 
+def test_competitor_research_logical_id_canonicalizes_ids_without_reordering_command():
+    ordered = CompetitorResearchCommand(research_run_id=42, competitor_ids=[1, 2, 3])
+    reordered = CompetitorResearchCommand(research_run_id=42, competitor_ids=[3, 1, 2])
+    repeated = CompetitorResearchCommand(research_run_id=42, competitor_ids=[3, 1, 2, 2, 1])
+
+    assert ordered.logical_id == reordered.logical_id == repeated.logical_id
+    assert reordered.competitor_ids == [3, 1, 2]
+    assert repeated.competitor_ids == [3, 1, 2, 2, 1]
+
+
+def test_research_run_analysis_logical_id_canonicalizes_ids_without_reordering_command():
+    ordered_ids = [1, 2, 3]
+    reordered_ids = [3, 1, 2, 2]
+    ordered = AIAnalysisCommand(
+        research_run_id=42,
+        scope="research_run",
+        provider=FakeAIProvider(),
+        competitor_research_ids=ordered_ids,
+    )
+    reordered = AIAnalysisCommand(
+        research_run_id=42,
+        scope="research_run",
+        provider=FakeAIProvider(),
+        competitor_research_ids=reordered_ids,
+    )
+
+    assert ordered.logical_id == reordered.logical_id
+    assert ordered.competitor_research_ids == ordered_ids
+    assert reordered.competitor_research_ids == reordered_ids
+
+
 def test_different_logical_commands_have_different_logical_ids():
     command_a = CompetitorDiscoveryCommand(research_run_id=42)
     command_b = CompetitorDiscoveryCommand(research_run_id=43)

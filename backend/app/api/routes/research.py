@@ -1,35 +1,48 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.background.commands import (
+    AIAnalysisCommand,
+    CompetitorDiscoveryCommand,
+    CompetitorResearchCommand,
+    SourceCollectionCommand,
+)
+from app.background.runtime import (
+    BackgroundRuntime,
+    create_ai_provider,
+    get_background_runtime,
+)
 from app.models.company_research import CompanyResearch
 from app.models.competitor import Competitor
-from app.models.competitor_evidence import CompetitorEvidence
-from app.models.competitor_research import CompetitorResearch
-from app.models.competitor_source import CompetitorSource
 from app.models.research_run import ResearchRun
 from app.schemas.competitor import DiscoveredCompetitorResponse, DiscoveryRequest
-from app.schemas.competitor_evidence import CompetitorEvidenceCreate, CompetitorEvidenceResponse
-from app.schemas.competitor_research import CompetitorResearchResponse, CompetitorResearchUpdate
-from app.schemas.competitor_source import CompetitorSourceCreate, CompetitorSourceResponse
-from app.schemas.competitor_discovery_api import CompetitorDiscoveryApiResponse
+from app.schemas.competitor_evidence import CompetitorEvidenceCreate
+from app.schemas.competitor_research import CompetitorResearchUpdate
+from app.schemas.competitor_source import CompetitorSourceCreate
+from app.schemas.background_operation import AIAnalysisRequest, BackgroundOperationResponse
 from app.schemas.research import (
     CompanyResearchResponse,
     ResearchCreate,
     ResearchResponse,
     ResearchDiscoverResponse,
     ResearchCompetitorRequest,
-    ResearchCompetitorResponse,
     ResearchCompetitorUpdateResponse,
     ResearchEvidenceListResponse,
     ResearchEvidenceResponse,
-    ResearchSourceCollectionResponse,
     ResearchSourceListResponse,
     ResearchSourceResponse,
     ResearchUnderstandResponse,
 )
 from app.services import research as research_service
-from app.services.competitor_discovery_run import run_competitor_discovery
+from app.repositories import competitor_research as competitor_research_repository
+from app.api.response_mappers.research import (
+    competitor_evidence_to_response,
+    competitor_research_to_response,
+    competitor_source_to_response,
+)
+
+from app.api.routes.background_operations import operation_to_response
 
 router = APIRouter(prefix="/research", tags=["research"])
 
@@ -52,19 +65,27 @@ def to_response(research_run: ResearchRun) -> ResearchResponse:
 
 @discovery_router.post(
     "/research-runs/{research_run_id}/competitor-discovery",
-    response_model=CompetitorDiscoveryApiResponse,
+    response_model=BackgroundOperationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 def discover_competitors_from_provider(
     research_run_id: int,
+    background_tasks: BackgroundTasks,
+    response: Response,
     db: Session = Depends(get_db),
-) -> CompetitorDiscoveryApiResponse:
-    try:
-        discovery_run = run_competitor_discovery(db, research_run_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return CompetitorDiscoveryApiResponse(
-        research_run=discovery_run,
-        candidates=discovery_run.candidates,
+    runtime: BackgroundRuntime = Depends(get_background_runtime),
+) -> BackgroundOperationResponse:
+    research_run = research_service.get_research_run(db, research_run_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    return _enqueue_operation(
+        background_tasks,
+        response,
+        command=CompetitorDiscoveryCommand(research_run_id=research_run_id),
+        operation="competitor_discovery",
+        research_run_id=research_run_id,
+        resource_reference={"research_run_id": research_run_id},
+        runtime=runtime,
     )
 
 
@@ -89,69 +110,6 @@ def competitor_to_discovery_response(competitor: Competitor) -> DiscoveredCompet
         domain=competitor.domain,
         created_at=competitor.created_at,
         updated_at=competitor.updated_at,
-    )
-
-
-def competitor_research_to_response(
-    competitor_research: CompetitorResearch,
-) -> CompetitorResearchResponse:
-    return CompetitorResearchResponse(
-        id=competitor_research.id,
-        competitor_id=competitor_research.competitor_id,
-        description=competitor_research.description,
-        industry=competitor_research.industry,
-        products_services=competitor_research.products_services,
-        target_customers=competitor_research.target_customers,
-        business_model=competitor_research.business_model,
-        created_at=competitor_research.created_at,
-        updated_at=competitor_research.updated_at,
-    )
-
-
-def competitor_evidence_to_response(
-    evidence: CompetitorEvidence,
-) -> CompetitorEvidenceResponse:
-    return CompetitorEvidenceResponse(
-        id=evidence.id,
-        competitor_research_id=evidence.competitor_research_id,
-        source_id=evidence.source_id,
-        source_url=evidence.source_url,
-        source_title=evidence.source_title,
-        source_type=evidence.source_type,
-        publisher=evidence.publisher,
-        published_at=evidence.published_at,
-        retrieved_at=evidence.retrieved_at,
-        content=evidence.content,
-        content_excerpt=evidence.content_excerpt,
-        processing_status=evidence.processing_status,
-        validation_status=evidence.validation_status,
-        processing_error=evidence.processing_error,
-        validation_reason=evidence.validation_reason,
-        normalized_content=evidence.normalized_content,
-        normalized_excerpt=evidence.normalized_excerpt,
-        normalized_content_hash=evidence.normalized_content_hash,
-        processed_at=evidence.processed_at,
-        created_at=evidence.created_at,
-        updated_at=evidence.updated_at,
-    )
-
-
-def competitor_source_to_response(source: CompetitorSource) -> CompetitorSourceResponse:
-    return CompetitorSourceResponse(
-        id=source.id,
-        competitor_research_id=source.competitor_research_id,
-        canonical_url=source.canonical_url,
-        source_type=source.source_type,
-        discovery_method=source.discovery_method,
-        status=source.status,
-        attempt_count=source.attempt_count,
-        last_http_status=source.last_http_status,
-        last_attempted_at=source.last_attempted_at,
-        failure_category=source.failure_category,
-        failure_reason=source.failure_reason,
-        content_hash=source.content_hash,
-        created_at=source.created_at,
-        updated_at=source.updated_at,
     )
 
 
@@ -221,28 +179,30 @@ def discover_research(
     )
 
 
-@router.post("/{research_id}/research", response_model=ResearchCompetitorResponse)
+@router.post("/{research_id}/research", response_model=BackgroundOperationResponse, status_code=status.HTTP_202_ACCEPTED)
 def research_competitors(
     research_id: int,
     payload: ResearchCompetitorRequest,
+    background_tasks: BackgroundTasks,
+    response: Response,
     db: Session = Depends(get_db),
-) -> ResearchCompetitorResponse:
+    runtime: BackgroundRuntime = Depends(get_background_runtime),
+) -> BackgroundOperationResponse:
     research_run = research_service.get_research_run(db, research_id)
     if research_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
     try:
-        competitor_research = research_service.research_competitors(
-            db,
-            research_run,
-            payload.competitor_ids,
-        )
+        competitor_ids = research_service.validate_research_competitors(db, research_run, payload.competitor_ids)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    return ResearchCompetitorResponse(
-        research=to_response(research_run),
-        competitor_research=[
-            competitor_research_to_response(item) for item in competitor_research
-        ],
+    return _enqueue_operation(
+        background_tasks,
+        response,
+        command=CompetitorResearchCommand(research_run_id=research_id, competitor_ids=competitor_ids),
+        operation="competitor_research",
+        research_run_id=research_id,
+        resource_reference={"competitor_ids": competitor_ids},
+        runtime=runtime,
     )
 
 
@@ -410,30 +370,122 @@ def list_research_sources(
 
 @router.post(
     "/{research_id}/competitors/{competitor_id}/research/sources/{source_id}/collect",
-    response_model=ResearchSourceCollectionResponse,
+    response_model=BackgroundOperationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 def collect_research_source(
     research_id: int,
     competitor_id: int,
     source_id: int,
+    background_tasks: BackgroundTasks,
+    response: Response,
     db: Session = Depends(get_db),
-) -> ResearchSourceCollectionResponse:
+    runtime: BackgroundRuntime = Depends(get_background_runtime),
+) -> BackgroundOperationResponse:
     research_run = research_service.get_research_run(db, research_id)
     if research_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
     try:
-        source, evidence = research_service.collect_competitor_source(
+        competitor_research, _ = research_service.get_source_collection_target(
             db,
             research_run,
             competitor_id,
             source_id,
         )
-    except research_service.SourceCollectionError as exc:
-        raise HTTPException(status_code=exc.http_status or status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    return ResearchSourceCollectionResponse(
-        research=to_response(research_run),
-        source=competitor_source_to_response(source),
-        evidence=competitor_evidence_to_response(evidence),
+    return _enqueue_operation(
+        background_tasks,
+        response,
+        command=SourceCollectionCommand(
+            research_run_id=research_id,
+            competitor_id=competitor_id,
+            competitor_research_id=competitor_research.id,
+            source_id=source_id,
+        ),
+        operation="source_collection",
+        research_run_id=research_id,
+        resource_reference={
+            "competitor_id": competitor_id,
+            "competitor_research_id": competitor_research.id,
+            "source_id": source_id,
+        },
+        runtime=runtime,
     )
+
+
+@router.post(
+    "/{research_id}/ai-analysis",
+    response_model=BackgroundOperationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def submit_ai_analysis(
+    research_id: int,
+    payload: AIAnalysisRequest,
+    background_tasks: BackgroundTasks,
+    response: Response,
+    db: Session = Depends(get_db),
+    runtime: BackgroundRuntime = Depends(get_background_runtime),
+) -> BackgroundOperationResponse:
+    research_run = research_service.get_research_run(db, research_id)
+    if research_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
+    selected_ids = (
+        [payload.competitor_research_id]
+        if payload.scope == "competitor" and payload.competitor_research_id is not None
+        else payload.competitor_research_ids or []
+    )
+    executions = competitor_research_repository.get_by_ids(db, selected_ids)
+    if len(executions) != len(set(selected_ids)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Competitor research execution not found")
+    if any(item.research_run_id != research_id for item in executions):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Competitor research execution must belong to the research run")
+    try:
+        command = AIAnalysisCommand(
+            research_run_id=research_id,
+            scope=payload.scope,
+            provider=create_ai_provider(),
+            competitor_research_id=payload.competitor_research_id,
+            competitor_research_ids=payload.competitor_research_ids,
+            contract_version=payload.contract_version,
+            prompt_version=payload.prompt_version,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    resource_reference: dict[str, object] = {"scope": payload.scope}
+    if payload.scope == "competitor":
+        resource_reference["competitor_research_id"] = payload.competitor_research_id
+    else:
+        resource_reference["competitor_research_ids"] = payload.competitor_research_ids or []
+    return _enqueue_operation(
+        background_tasks,
+        response,
+        command=command,
+        operation="ai_analysis",
+        research_run_id=research_id,
+        resource_reference=resource_reference,
+        runtime=runtime,
+    )
+
+
+def _enqueue_operation(
+    background_tasks: BackgroundTasks,
+    response: Response,
+    *,
+    command,
+    operation: str,
+    research_run_id: int,
+    resource_reference: dict[str, object],
+    runtime: BackgroundRuntime | None = None,
+) -> BackgroundOperationResponse:
+    if runtime is None:
+        raise RuntimeError("Background runtime dependency is required")
+    record = runtime.submit(
+        command,
+        operation=operation,
+        research_run_id=research_run_id,
+        resource_reference=resource_reference,
+    )
+    response.headers["Location"] = f"/api/background-operations/{record.logical_id}"
+    background_tasks.add_task(runtime.process_pending)
+    return operation_to_response(record)
