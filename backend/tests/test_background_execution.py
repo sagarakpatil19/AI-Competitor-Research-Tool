@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
+from app.ai.errors import (
+    ProviderInvalidOutputError,
+    ProviderResponseError,
+    ProviderTimeoutError,
+    ProviderUnavailableError,
+)
 from app.background.commands import (
     AIAnalysisCommand,
     CompetitorDiscoveryCommand,
@@ -12,7 +16,12 @@ from app.background.commands import (
 )
 from app.background.dispatcher import BackgroundDispatcher
 from app.background.queue import InMemoryQueue
-from app.background.worker import BackgroundWorker
+from app.background.worker import (
+    BackgroundExecutionResult,
+    BackgroundWorker,
+    DuplicateCommandError,
+    classify_background_failure,
+)
 
 
 class FakeAIProvider:
@@ -157,3 +166,100 @@ def test_worker_closes_session_when_dispatch_raises():
 def test_background_commands_validate_basic_contract(factory, message):
     with pytest.raises(ValueError, match=message):
         factory()
+
+
+def test_background_worker_retries_retryable_failures_and_avoids_duplicates():
+    queue = InMemoryQueue()
+    command = CompetitorDiscoveryCommand(research_run_id=21, max_attempts=3)
+    queue.enqueue(command)
+
+    def flaky_service(db, research_run_id):
+        raise TimeoutError("temporary outage")
+
+    dispatcher = BackgroundDispatcher(competitor_discovery_service=flaky_service)
+    worker = BackgroundWorker(queue=queue, dispatcher=dispatcher, db_session_factory=lambda: object())
+
+    result = worker.run_once()
+    assert result is not None and result.status == "retry_scheduled"
+    assert result.retryable is True
+    assert result.attempt_count == 1
+    assert len(queue) == 1
+    assert queue._items[0].attempt_count == 2
+
+    result2 = worker.run_once()
+    assert result2 is not None and result2.status == "retry_scheduled"
+    assert result2.retryable is True
+    assert result2.attempt_count == 2
+    assert queue._items[0].attempt_count == 3
+
+    result3 = worker.run_once()
+    assert result3 is not None and result3.status == "failed"
+    assert result3.attempt_count == 3
+    assert len(queue) == 0
+
+    queue.enqueue(command)
+    terminal_duplicate = worker.run_once()
+    assert terminal_duplicate is not None and terminal_duplicate.status == "duplicate"
+    assert terminal_duplicate.status != "completed"
+    assert isinstance(terminal_duplicate.result, DuplicateCommandError)
+
+    duplicate_queue = InMemoryQueue()
+    duplicate_queue.enqueue(command)
+    duplicate_queue.enqueue(command)
+    assert len(duplicate_queue) == 1
+
+    duplicate_result = BackgroundExecutionResult(
+        status="duplicate",
+        command=command,
+        result=DuplicateCommandError(command.logical_id),
+    )
+    assert duplicate_result.status == "duplicate"
+
+
+@pytest.mark.parametrize(
+    ("error", "retryable"),
+    [
+        (ProviderUnavailableError("unavailable"), True),
+        (ProviderTimeoutError("timeout"), True),
+        (ProviderResponseError("bad response"), False),
+        (ProviderInvalidOutputError("invalid output"), False),
+    ],
+)
+def test_ai_provider_failure_classification(error, retryable):
+    assert classify_background_failure(error).retryable is retryable
+
+
+def test_successful_execution_is_completed_on_first_attempt():
+    queue = InMemoryQueue()
+    command = CompetitorDiscoveryCommand(research_run_id=31)
+    queue.enqueue(command)
+    worker = BackgroundWorker(
+        queue=queue,
+        dispatcher=BackgroundDispatcher(competitor_discovery_service=lambda db, research_run_id: "ok"),
+        db_session_factory=lambda: object(),
+    )
+
+    result = worker.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert result.attempt_count == 1
+    assert len(queue) == 0
+
+
+def test_background_command_logical_id_is_stable_across_retries():
+    command_a = CompetitorResearchCommand(research_run_id=42, competitor_ids=[1, 2], max_attempts=4)
+    command_b = CompetitorResearchCommand(research_run_id=42, competitor_ids=[1, 2], max_attempts=5)
+    retry_command = command_a.with_retry_attempt()
+
+    assert command_a.logical_id == command_b.logical_id
+    assert command_a.logical_id == retry_command.logical_id
+    assert retry_command.attempt_count == 2
+    assert command_a.logical_id == command_a.with_retry_attempt(3).logical_id
+
+
+def test_different_logical_commands_have_different_logical_ids():
+    command_a = CompetitorDiscoveryCommand(research_run_id=42)
+    command_b = CompetitorDiscoveryCommand(research_run_id=43)
+
+    assert command_a.logical_id != command_b.logical_id

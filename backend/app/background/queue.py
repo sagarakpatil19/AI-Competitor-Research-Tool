@@ -18,14 +18,21 @@ class InMemoryQueue:
     """Simple in-memory queue for local development and testing only."""
 
     _items: list[BackgroundCommand] = field(default_factory=list)
+    _queued_logical_ids: set[str] = field(default_factory=set)
 
     def enqueue(self, command: BackgroundCommand) -> None:
+        logical_id = command.logical_id
+        if logical_id in self._queued_logical_ids:
+            return
         self._items.append(command)
+        self._queued_logical_ids.add(logical_id)
 
     def dequeue(self) -> BackgroundCommand | None:
         if not self._items:
             return None
-        return self._items.pop(0)
+        command = self._items.pop(0)
+        self._queued_logical_ids.discard(command.logical_id)
+        return command
 
     def __len__(self) -> int:
         return len(self._items)
