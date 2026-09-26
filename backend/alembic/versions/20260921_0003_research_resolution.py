@@ -7,6 +7,7 @@ Create Date: 2026-09-21
 from typing import Sequence, Union
 
 from alembic import op
+from sqlalchemy.dialects import postgresql
 import sqlalchemy as sa
 
 
@@ -16,16 +17,18 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-research_input_type = sa.Enum(
+research_input_type = postgresql.ENUM(
     "url",
     "domain",
     "company_name",
     name="research_input_type",
+    create_type=False,
 )
 
 
 def upgrade() -> None:
     research_input_type.create(op.get_bind(), checkfirst=True)
+
     op.add_column(
         "research_runs",
         sa.Column("input_type", research_input_type, nullable=True),
