@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timezone
 
 import pytest
@@ -745,8 +746,26 @@ def test_new_evidence_is_pending_and_processing_exposes_structured_fields(client
 def test_processing_normalizes_content_and_hashes_deterministically(client):
     _, _, _, endpoint = create_evidence_foundation(client)
     raw_content = "  Product\r\n\tstrategy\x00 with   useful punctuation!  " + ("x" * 40)
-    created = client.post(endpoint, json={"source_url": "https://example.com", "content": raw_content})
-    evidence_id = created.json()["evidence"]["id"]
+    raw_excerpt = "Relevant excerpt\x00 with useful context."
+    created_response = client.post(
+        endpoint,
+        json={
+            "source_url": "https://example.com",
+            "content": raw_content,
+            "content_excerpt": raw_excerpt,
+        },
+    )
+    assert created_response.status_code == 201
+    created = created_response.json()["evidence"]
+    evidence_id = created["id"]
+    persisted = next(
+        item for item in client.get(endpoint).json()["evidence"]
+        if item["id"] == evidence_id
+    )
+    assert persisted["content"] == raw_content.replace("\x00", "")
+    assert persisted["content_excerpt"] == raw_excerpt.replace("\x00", "")
+    assert "\x00" not in persisted["content"]
+    assert "\x00" not in persisted["content_excerpt"]
 
     first = client.post(f"{endpoint}/{evidence_id}/process").json()["evidence"]
     second = client.post(f"{endpoint}/{evidence_id}/process").json()["evidence"]
@@ -1098,6 +1117,117 @@ def test_collect_source_creates_evidence_and_updates_state(client, monkeypatch):
     assert body["result"]["evidence"]["competitor_research_id"] == foundation["id"]
     assert body["result"]["evidence"]["content"] == "Example collected content"
     assert competitor_id
+
+
+def test_collect_source_sanitizes_nul_before_persisting_evidence(client, monkeypatch):
+    _, _, foundation, endpoint = create_source_foundation(client)
+    registered = client.post(endpoint, json={"source_url": "https://example.com/nul"}).json()["source"]
+
+    class NulSourceRetriever:
+        def retrieve(self, url: str) -> RetrievedSource:
+            content = "Collected source\x00 content with enough useful evidence."
+            excerpt = "Collected excerpt\x00 for display."
+            return RetrievedSource(
+                final_url=url,
+                http_status=200,
+                content_type="text/plain",
+                content=content,
+                content_excerpt=excerpt,
+                content_hash="b" * 64,
+                retrieved_at=datetime.now(timezone.utc),
+                source_title="Collected\x00 title",
+            )
+
+    monkeypatch.setattr(research_service, "source_retriever", NulSourceRetriever())
+    response = client.post(f"{endpoint}/{registered['id']}/collect")
+
+    body = completed_background_operation(client, response)
+    evidence = body["result"]["evidence"]
+    assert body["operation"] == "source_collection"
+    assert body["status"] == "completed"
+    assert evidence["competitor_research_id"] == foundation["id"]
+    assert evidence["content"] == "Collected source content with enough useful evidence."
+    assert evidence["content_excerpt"] == "Collected excerpt for display."
+    assert evidence["source_title"] == "Collected title"
+    assert "\x00" not in evidence["content"]
+    assert "\x00" not in evidence["content_excerpt"]
+    assert evidence["normalized_content"] == "Collected source content with enough useful evidence."
+    assert evidence["validation_status"] == "valid"
+
+
+def test_collect_source_refreshes_existing_evidence_for_nul_content_change(client, monkeypatch):
+    research, competitor_id, foundation, endpoint = create_source_foundation(client)
+    registered = client.post(endpoint, json={"source_url": "https://example.com/refresh"}).json()["source"]
+    content = "A sufficiently long source document for validating collected evidence."
+    first_retrieved_at = datetime(2026, 9, 26, 12, tzinfo=timezone.utc)
+    second_retrieved_at = datetime(2026, 9, 27, 12, tzinfo=timezone.utc)
+
+    class RefreshRetriever:
+        responses = [
+            RetrievedSource(
+                final_url="https://example.com/first",
+                http_status=200,
+                content_type="text/plain",
+                content=content,
+                content_excerpt="Original excerpt",
+                content_hash="a" * 64,
+                retrieved_at=first_retrieved_at,
+                source_title="Original title",
+            ),
+            RetrievedSource(
+                final_url="https://example.com/second",
+                http_status=200,
+                content_type="text/plain",
+                content=content.replace("collected", "collec\x00ted"),
+                content_excerpt="Updated\x00 excerpt",
+                content_hash="b" * 64,
+                retrieved_at=second_retrieved_at,
+                source_title="Updated\x00 title",
+            ),
+        ]
+
+        def retrieve(self, url: str) -> RetrievedSource:
+            return self.responses.pop(0)
+
+    monkeypatch.setattr(research_service, "source_retriever", RefreshRetriever())
+    db = SessionLocal()
+    try:
+        research_run = research_service.get_research_run(db, research["research_id"])
+        assert research_run is not None
+        first_source, first_evidence = research_service.collect_competitor_source(
+            db,
+            research_run,
+            competitor_id,
+            registered["id"],
+            foundation["id"],
+        )
+        second_source, second_evidence = research_service.collect_competitor_source(
+            db,
+            research_run,
+            competitor_id,
+            registered["id"],
+            foundation["id"],
+        )
+    finally:
+        db.close()
+
+    expected_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    assert first_source.id == second_source.id == registered["id"]
+    assert first_evidence.id == second_evidence.id
+    assert second_evidence.content == content
+    assert "\x00" not in second_evidence.content
+    assert second_evidence.content_excerpt == "Updated excerpt"
+    assert "\x00" not in second_evidence.content_excerpt
+    assert second_evidence.source_title == "Updated title"
+    assert "\x00" not in second_evidence.source_title
+    assert second_evidence.source_url == "https://example.com/second"
+    assert second_evidence.retrieved_at == second_retrieved_at
+    assert second_evidence.normalized_content == content
+    assert second_evidence.normalized_content_hash == expected_hash
+    assert second_evidence.normalized_content_hash == first_evidence.normalized_content_hash
+    assert second_evidence.processing_status == "processed"
+    assert second_evidence.validation_status == "valid"
+    assert second_evidence.processed_at is not None
 
 
 def test_repeated_identical_source_collection_reuses_evidence(client, monkeypatch):

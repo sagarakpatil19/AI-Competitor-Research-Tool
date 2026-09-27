@@ -365,6 +365,10 @@ def _require_competitor_research(
     return competitor_research
 
 
+def _remove_postgres_nul(value: str | None) -> str | None:
+    return value.replace("\x00", "") if value is not None else None
+
+
 def create_competitor_evidence(
     db: Session,
     research_run: ResearchRun,
@@ -379,6 +383,9 @@ def create_competitor_evidence(
         competitor_research_id,
     )
     evidence_data["source_url"] = str(evidence_data["source_url"])
+    for field in ("content", "content_excerpt", "source_title", "source_type", "publisher"):
+        if field in evidence_data:
+            evidence_data[field] = _remove_postgres_nul(evidence_data[field])
     for field in ("source_title", "source_type", "publisher"):
         value = evidence_data.get(field)
         if value is not None:
@@ -595,24 +602,28 @@ def collect_competitor_source(
 
     existing_evidence = competitor_evidence_repository.get_by_source_id(db, source.id)
     evidence = existing_evidence[0] if existing_evidence else None
+    evidence_content = _remove_postgres_nul(retrieved.content)
+    evidence_excerpt = _remove_postgres_nul(retrieved.content_excerpt)
+    evidence_title = _remove_postgres_nul(retrieved.source_title)
+    evidence_source_type = _remove_postgres_nul(source.source_type)
     if evidence is None:
         evidence = CompetitorEvidence(
             competitor_research_id=competitor_research.id,
             source_id=source.id,
             source_url=retrieved.final_url,
-            source_title=retrieved.source_title,
-            source_type=source.source_type,
+            source_title=evidence_title,
+            source_type=evidence_source_type,
             retrieved_at=retrieved.retrieved_at,
-            content=retrieved.content,
-            content_excerpt=retrieved.content_excerpt,
+            content=evidence_content,
+            content_excerpt=evidence_excerpt,
         )
         evidence = competitor_evidence_repository.create_evidence(db, evidence)
     elif evidence.content != retrieved.content:
         evidence.source_url = retrieved.final_url
-        evidence.source_title = retrieved.source_title
+        evidence.source_title = evidence_title
         evidence.retrieved_at = retrieved.retrieved_at
-        evidence.content = retrieved.content
-        evidence.content_excerpt = retrieved.content_excerpt
+        evidence.content = evidence_content
+        evidence.content_excerpt = evidence_excerpt
         evidence.processing_status = PROCESSING_PENDING
         evidence.validation_status = VALIDATION_PENDING
         evidence.processing_error = None

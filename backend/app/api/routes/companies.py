@@ -21,7 +21,7 @@ def create_company(project_id: int, payload: CompanyCreate, db: Session = Depend
     require_project(db, project_id)
     if company_repository.get_company(db, project_id) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project already has a primary company")
-    company = Company(project_id=project_id, **payload.model_dump())
+    company = Company(project_id=project_id, **payload.model_dump(mode="json"))
     try:
         return company_repository.create_company(db, company)
     except IntegrityError:
@@ -44,6 +44,6 @@ def update_company(project_id: int, payload: CompanyUpdate, db: Session = Depend
     company = company_repository.get_company(db, project_id)
     if company is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    for field, value in payload.model_dump(exclude_unset=True, mode="json").items():
         setattr(company, field, value)
     return company_repository.save_company(db, company)

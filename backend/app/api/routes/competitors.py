@@ -25,7 +25,10 @@ def list_competitors(project_id: int, db: Session = Depends(get_db)) -> list[Com
 @project_router.post("", response_model=CompetitorResponse, status_code=status.HTTP_201_CREATED)
 def create_competitor(project_id: int, payload: CompetitorCreate, db: Session = Depends(get_db)) -> Competitor:
     require_project(db, project_id)
-    return competitor_repository.create_competitor(db, Competitor(project_id=project_id, **payload.model_dump()))
+    return competitor_repository.create_competitor(
+        db,
+        Competitor(project_id=project_id, **payload.model_dump(mode="json")),
+    )
 
 
 @competitor_router.get("/{competitor_id}", response_model=CompetitorResponse)
@@ -41,7 +44,7 @@ def update_competitor(competitor_id: int, payload: CompetitorUpdate, db: Session
     competitor = competitor_repository.get_competitor(db, competitor_id)
     if competitor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Competitor not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    for field, value in payload.model_dump(exclude_unset=True, mode="json").items():
         setattr(competitor, field, value)
     return competitor_repository.save_competitor(db, competitor)
 
