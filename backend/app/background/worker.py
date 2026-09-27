@@ -12,6 +12,7 @@ from app.ai.errors import (
 from app.background.commands import BackgroundCommand
 from app.background.dispatcher import BackgroundDispatcher
 from app.background.queue import QueueProtocol
+from app.services.ai_analysis import AIAnalysisExecutionFailure
 
 
 @dataclass(frozen=True)
@@ -98,14 +99,19 @@ class BackgroundWorker:
                 max_attempts=command.max_attempts,
             )
         except Exception as exc:  # pragma: no cover - defensive boundary
-            failure = classify_background_failure(exc)
+            failure_exception = (
+                exc.original_exception
+                if isinstance(exc, AIAnalysisExecutionFailure)
+                else exc
+            )
+            failure = classify_background_failure(failure_exception)
             if failure.retryable and command.attempt_count < command.max_attempts:
                 retry_command = command.with_retry_attempt(command.attempt_count + 1)
                 self.queue.enqueue(retry_command)
                 return BackgroundExecutionResult(
                     status="retry_scheduled",
                     command=command,
-                    result=exc,
+                    result=failure_exception,
                     logical_id=logical_id,
                     retryable=True,
                     attempt_count=command.attempt_count,
@@ -116,7 +122,7 @@ class BackgroundWorker:
             return BackgroundExecutionResult(
                 status="failed",
                 command=command,
-                result=exc,
+                result=failure_exception,
                 logical_id=logical_id,
                 retryable=failure.retryable,
                 attempt_count=command.attempt_count,

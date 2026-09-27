@@ -1,12 +1,21 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.ai.errors import ProviderResponseError
+import pytest
+
+from app.ai.contracts import ProviderAnalysisResult
+from app.ai.errors import ProviderResponseError, ProviderTimeoutError, ProviderUnavailableError
 from app.api.routes import research as research_routes
 from app.background.commands import AIAnalysisCommand, CompetitorDiscoveryCommand, SourceCollectionCommand
 from app.background.runtime import BackgroundRuntime
 from app.integrations.source_retriever import RetrievedSource
 from app.main import app
+from app.models.ai_analysis import AIAnalysis
+from app.models.competitor_research_section import (
+    CompetitorResearchSection,
+    CompetitorResearchSectionName,
+)
+from app.db.session import SessionLocal
 from app.services import research as research_service
 
 
@@ -35,6 +44,28 @@ def _create_competitor_research_execution(client):
     operation = _poll_operation(client, submission)
     execution = operation["result"]["competitor_research"][0]
     return research_run_id, competitor, execution
+
+
+def _ensure_ai_analysis_sections(competitor_research_id):
+    db = SessionLocal()
+    try:
+        existing_sections = {
+            section
+            for (section,) in db.query(CompetitorResearchSection.section)
+            .filter_by(competitor_research_id=competitor_research_id)
+            .all()
+        }
+        db.add_all(
+            CompetitorResearchSection(
+                competitor_research_id=competitor_research_id,
+                section=section.value,
+            )
+            for section in CompetitorResearchSectionName
+            if section.value not in existing_sections
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 def test_discovery_submission_returns_accepted_and_exposes_queued_command(client, monkeypatch):
@@ -137,14 +168,18 @@ def test_ai_analysis_submission_uses_command_and_existing_analysis_reference(cli
         json={"competitor_ids": [competitor["id"]]},
     )
     execution_id = _poll_operation(client, research_submission)["result"]["competitor_research"][0]["id"]
+    _ensure_ai_analysis_sections(execution_id)
 
     class FakeAIProvider:
         def analyze(self, context):
-            raise AssertionError("The mocked analysis service must prevent provider calls")
+            return ProviderAnalysisResult(
+                scope=context.scope,
+                provider="fake-provider",
+                model="fake-model",
+            )
 
     monkeypatch.setattr(research_routes, "create_ai_provider", FakeAIProvider)
     runtime: BackgroundRuntime = app.state.background_runtime
-    runtime.dispatcher.ai_analysis_service = lambda *args, **kwargs: SimpleNamespace(id=504)
     response = client.post(
         f"/api/research/{research_run_id}/ai-analysis",
         json={"scope": "competitor", "competitor_research_id": execution_id},
@@ -157,7 +192,64 @@ def test_ai_analysis_submission_uses_command_and_existing_analysis_reference(cli
     assert command.research_run_id == research_run_id
     assert command.competitor_research_id == execution_id
     assert operation["status"] == "completed"
-    assert operation["result"] == {"id": 504}
+    assert operation["result"]["id"]
+    assert operation["result"]["status"] == "completed"
+    assert operation["result"]["scope"] == "competitor"
+
+
+@pytest.mark.parametrize(
+    ("error_type", "message"),
+    [
+        (ProviderUnavailableError, "Gemini is temporarily unavailable"),
+        (ProviderTimeoutError, "Gemini request timed out"),
+    ],
+)
+def test_background_ai_transient_failures_persist_analysis_and_retry(
+    client,
+    monkeypatch,
+    error_type,
+    message,
+):
+    research_run_id, _, execution = _create_competitor_research_execution(client)
+    _ensure_ai_analysis_sections(execution["id"])
+
+    class FailingAIProvider:
+        def analyze(self, context):
+            raise error_type(message)
+
+    monkeypatch.setattr(research_routes, "create_ai_provider", FailingAIProvider)
+    runtime: BackgroundRuntime = app.state.background_runtime
+    endpoint = f"/api/research/{research_run_id}/ai-analysis"
+    response = client.post(
+        endpoint,
+        json={"scope": "competitor", "competitor_research_id": execution["id"]},
+    )
+
+    assert response.status_code == 202
+    submitted = response.json()
+    operation = _poll_operation(client, response)
+    assert submitted["status"] == "queued"
+    assert operation["logical_id"] == submitted["logical_id"]
+    assert operation["status"] == "failed"
+    assert operation["attempt_count"] == operation["max_attempts"] == 3
+    assert operation["failure_category"] == error_type.__name__.lower()
+    assert operation["failure_reason"] == message
+    assert operation["result"] is None
+    assert len(runtime.queue) == 0
+
+    db = SessionLocal()
+    try:
+        analyses = (
+            db.query(AIAnalysis)
+            .filter(AIAnalysis.research_run_id == research_run_id)
+            .order_by(AIAnalysis.id)
+            .all()
+        )
+    finally:
+        db.close()
+    assert len(analyses) == operation["max_attempts"]
+    assert all(analysis.status == "failed" for analysis in analyses)
+    assert all(analysis.failure_reason == message for analysis in analyses)
 
 
 def test_missing_research_and_unknown_operation_return_not_found(client):

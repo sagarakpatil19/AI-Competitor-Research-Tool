@@ -19,6 +19,13 @@ from app.models.ai_statement_evidence import AIStatementEvidence
 from app.models.ai_statement_fact import AIStatementFact
 
 
+class AIAnalysisExecutionFailure(Exception):
+    def __init__(self, analysis: AIAnalysis, original_exception: Exception) -> None:
+        super().__init__(str(original_exception))
+        self.analysis = analysis
+        self.original_exception = original_exception
+
+
 def execute_ai_analysis(
     db: Session,
     research_run_id: int,
@@ -29,6 +36,7 @@ def execute_ai_analysis(
     competitor_research_ids: list[int] | None = None,
     contract_version: str = "contract-v1",
     prompt_version: str = "prompt-v1",
+    _raise_failure: bool = False,
 ) -> AIAnalysis:
     if provider is None:
         raise ValueError("AI provider is required")
@@ -107,7 +115,33 @@ def execute_ai_analysis(
         db.add(analysis)
         db.commit()
         db.refresh(analysis)
+        if _raise_failure:
+            raise AIAnalysisExecutionFailure(analysis, exc) from exc
         return analysis
+
+
+def execute_ai_analysis_for_background(
+    db: Session,
+    research_run_id: int,
+    *,
+    provider: AIProvider,
+    scope: str,
+    competitor_research_id: int | None = None,
+    competitor_research_ids: list[int] | None = None,
+    contract_version: str = "contract-v1",
+    prompt_version: str = "prompt-v1",
+) -> AIAnalysis:
+    return execute_ai_analysis(
+        db,
+        research_run_id,
+        provider=provider,
+        scope=scope,
+        competitor_research_id=competitor_research_id,
+        competitor_research_ids=competitor_research_ids,
+        contract_version=contract_version,
+        prompt_version=prompt_version,
+        _raise_failure=True,
+    )
 
 
 def _provider_name(provider: AIProvider) -> str:

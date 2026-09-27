@@ -13,7 +13,7 @@ from app.background.queue import InMemoryQueue
 from app.background.worker import BackgroundWorker, classify_background_failure
 from app.db.session import SessionLocal
 from app.services import research as research_service
-from app.services.ai_analysis import execute_ai_analysis
+from app.services.ai_analysis import execute_ai_analysis_for_background
 from app.services.competitor_discovery_run import run_competitor_discovery
 
 
@@ -44,7 +44,7 @@ class BackgroundRuntime:
             competitor_discovery_service=run_competitor_discovery,
             competitor_research_service=research_service.research_competitors,
             source_collection_service=research_service.collect_competitor_source,
-            ai_analysis_service=execute_ai_analysis,
+            ai_analysis_service=execute_ai_analysis_for_background,
         )
         self.worker = BackgroundWorker(
             queue=self.queue,
