@@ -1,3 +1,9 @@
+from sqlalchemy import func
+
+from app.db.session import SessionLocal
+from app.models.competitor import Competitor
+
+
 def create_project(client, name="Market map"):
     response = client.post("/api/projects", json={"name": name, "description": "Signals and positioning"})
     assert response.status_code == 201
@@ -68,13 +74,19 @@ def test_competitor_crud(client):
 
 
 def test_invalid_ids_and_relationships(client):
+    db = SessionLocal()
+    try:
+        missing_competitor_id = (db.query(func.max(Competitor.id)).scalar() or 0) + 1
+    finally:
+        db.close()
+
     assert client.get("/api/projects/999").status_code == 404
     assert client.patch("/api/projects/999", json={"name": "Missing"}).status_code == 404
     assert client.delete("/api/projects/999").status_code == 404
     assert client.get("/api/projects/999/company").status_code == 404
     assert client.post("/api/projects/999/competitors", json={"name": "Rival"}).status_code == 404
-    assert client.get("/api/competitors/999").status_code == 404
-    assert client.patch("/api/competitors/999", json={"name": "Missing"}).status_code == 404
-    assert client.delete("/api/competitors/999").status_code == 404
+    assert client.get(f"/api/competitors/{missing_competitor_id}").status_code == 404
+    assert client.patch(f"/api/competitors/{missing_competitor_id}", json={"name": "Missing"}).status_code == 404
+    assert client.delete(f"/api/competitors/{missing_competitor_id}").status_code == 404
     project = create_project(client)
     assert client.post(f"/api/projects/{project['id']}/company", json={"name": "Bad", "website": "not-url"}).status_code == 422

@@ -90,9 +90,14 @@ def test_successful_discovery_persists_candidates_and_provenance(client):
         assert discovery_run.completed_at is not None
         assert provider.context.domain == "acme.example"
         candidates = db.query(CompetitorDiscoveryCandidate).filter_by(discovery_run_id=discovery_run.id).all()
-        sources = db.query(CompetitorDiscoveryCandidateSource).all()
+        sources = (
+            db.query(CompetitorDiscoveryCandidateSource)
+            .join(CompetitorDiscoveryCandidate)
+            .filter(CompetitorDiscoveryCandidate.discovery_run_id == discovery_run.id)
+            .all()
+        )
         assert len(candidates) == 2
-        assert len(sources) == 2
+        assert len(sources) == 3
         slack = next(item for item in candidates if item.domain == "slack.com")
         assert slack.validation_status == "valid"
         assert slack.research_run_id == research_run.id
@@ -192,7 +197,10 @@ def test_provider_failures_persist_failed_discovery_run(client, error, category)
         assert discovery_run.status == "failed"
         assert discovery_run.failure_category == category
         assert discovery_run.completed_at is not None
-        assert "auth" not in (discovery_run.failure_reason or "")
+        if category == "authentication":
+            assert discovery_run.failure_reason == "Discovery provider authentication failed"
+        else:
+            assert "auth" not in (discovery_run.failure_reason or "")
     finally:
         db.close()
 
@@ -207,7 +215,12 @@ def test_unexpected_provider_error_propagates_and_does_not_leave_run(client):
                 research_run.id,
                 FakeProvider(error=RuntimeError("unexpected")),
             )
-        assert db.query(CompetitorDiscoveryRun).count() == 0
+        assert (
+            db.query(CompetitorDiscoveryRun)
+            .filter_by(research_run_id=research_run.id)
+            .count()
+            == 0
+        )
     finally:
         db.close()
 

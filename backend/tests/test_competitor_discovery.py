@@ -41,7 +41,7 @@ def test_discovery_schemas_accept_foundation_values():
     assert run.provider_name == "manual"
     assert candidate.validation_status == "pending"
     assert candidate.discovery_status == "received"
-    assert source.canonical_url == "https://example.com/result"
+    assert str(source.canonical_url) == "https://example.com/result"
 
 
 def test_discovery_schemas_reject_unknown_statuses():
