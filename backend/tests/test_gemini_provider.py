@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.ai.contracts import AIComparisonResult, ProviderAnalysisResult
@@ -58,6 +60,25 @@ def valid_payload(scope="competitor"):
     )
 
 
+def wire_payload(result):
+    payload = result.model_dump()
+    for statement in payload["statements"]:
+        statement["fact_roles"] = [
+            {"context_id": context_id, "role": role}
+            for context_id, role in statement["fact_roles"].items()
+        ]
+        statement["evidence_roles"] = [
+            {"context_id": context_id, "role": role}
+            for context_id, role in statement["evidence_roles"].items()
+        ]
+    for comparison in payload["comparisons"]:
+        comparison["competitor_roles"] = [
+            {"context_id": context_id, "role": role}
+            for context_id, role in comparison["competitor_roles"].items()
+        ]
+    return payload
+
+
 def make_research_run_context():
     context = make_context("research_run")
     second_competitor = context.competitors[0].model_copy(update={
@@ -101,7 +122,7 @@ def make_research_run_context():
 
 
 def test_valid_competitor_response_is_parsed_and_validated():
-    client = FakeClient(response=FakeResponse(parsed=valid_payload().model_dump()))
+    client = FakeClient(response=FakeResponse(parsed=wire_payload(valid_payload())))
     provider = GeminiProvider(
         config=GeminiProviderConfig(api_key="test-key", model_name="gemini-3.8-flash"),
         client=client,
@@ -111,6 +132,21 @@ def test_valid_competitor_response_is_parsed_and_validated():
 
     assert result.provider == "gemini"
     assert result.statements[0].fact_context_ids == ["FACT_001"]
+    assert result.statements[0].fact_roles == {"FACT_001": "supports"}
+    assert result.statements[0].evidence_roles == {"EVIDENCE_001": "quotes"}
+
+
+def test_valid_wire_json_text_fallback_is_parsed():
+    client = FakeClient(response=FakeResponse(text=json.dumps(wire_payload(valid_payload()))))
+    provider = GeminiProvider(
+        config=GeminiProviderConfig(api_key="test-key"),
+        client=client,
+    )
+
+    result = provider.analyze(make_context())
+
+    assert result.statements[0].fact_roles == {"FACT_001": "supports"}
+    assert result.statements[0].evidence_roles == {"EVIDENCE_001": "quotes"}
 
 
 def test_valid_research_run_response_with_comparison_is_accepted():
@@ -127,9 +163,10 @@ def test_valid_research_run_response_with_comparison_is_accepted():
             fact_context_ids=["FACT_001", "FACT_002"],
             evidence_context_ids=["EVIDENCE_001", "EVIDENCE_002"],
             source_context_ids=["SOURCE_001", "SOURCE_002"],
+            competitor_roles={"COMPETITOR_001": "subject", "COMPETITOR_002": "compared"},
         )],
     })
-    client = FakeClient(response=FakeResponse(parsed=payload.model_dump()))
+    client = FakeClient(response=FakeResponse(parsed=wire_payload(payload)))
     provider = GeminiProvider(
         config=GeminiProviderConfig(api_key="test-key", model_name="gemini-3.8-flash"),
         client=client,
@@ -138,10 +175,14 @@ def test_valid_research_run_response_with_comparison_is_accepted():
     result = provider.analyze(context)
 
     assert result.comparisons[0].competitor_context_ids == ["COMPETITOR_001", "COMPETITOR_002"]
+    assert result.comparisons[0].competitor_roles == {
+        "COMPETITOR_001": "subject",
+        "COMPETITOR_002": "compared",
+    }
 
 
 def test_provider_uses_configured_model_and_semantic_context_ids():
-    client = FakeClient(response=FakeResponse(parsed=valid_payload().model_dump()))
+    client = FakeClient(response=FakeResponse(parsed=wire_payload(valid_payload())))
     provider = GeminiProvider(
         config=GeminiProviderConfig(api_key="test-key", model_name="configured-model"),
         client=client,
@@ -161,23 +202,89 @@ def test_provider_uses_configured_model_and_semantic_context_ids():
     assert call["config"].response_mime_type == "application/json"
 
 
+def test_response_config_uses_wire_schema_without_additional_properties():
+    response_config = GeminiProvider._response_config()
+    response_schema = response_config.response_schema
+    schema = (
+        response_schema.model_json_schema()
+        if hasattr(response_schema, "model_json_schema")
+        else response_schema
+    )
+
+    def assert_no_additional_properties(value):
+        if isinstance(value, dict):
+            assert "additionalProperties" not in value
+            for child in value.values():
+                assert_no_additional_properties(child)
+        elif isinstance(value, list):
+            for child in value:
+                assert_no_additional_properties(child)
+
+    assert response_config.response_mime_type == "application/json"
+    assert_no_additional_properties(schema)
+
+
 def test_unknown_fact_evidence_and_competitor_references_are_rejected():
     for field, value, message in (
         ("fact_context_ids", ["FACT_999"], "Unknown fact"),
         ("evidence_context_ids", ["EVIDENCE_999"], "Unknown evidence"),
         ("competitor_context_id", "COMPETITOR_999", "Unknown competitor"),
     ):
-        payload = valid_payload().model_dump()
+        payload = wire_payload(valid_payload())
         statement = payload["statements"][0]
         statement[field] = value
         if field == "fact_context_ids":
-            statement["fact_roles"] = {"FACT_999": "supports"}
+            statement["fact_roles"] = [{"context_id": "FACT_999", "role": "supports"}]
         if field == "evidence_context_ids":
-            statement["evidence_roles"] = {"EVIDENCE_999": "quotes"}
+            statement["evidence_roles"] = [{"context_id": "EVIDENCE_999", "role": "quotes"}]
         client = FakeClient(response=FakeResponse(parsed=payload))
         provider = GeminiProvider(config=GeminiProviderConfig(api_key="test-key"), client=client)
         with pytest.raises(ProviderInvalidOutputError, match=message):
             provider.analyze(make_context())
+
+
+@pytest.mark.parametrize(
+    ("role_kind", "scope"),
+    [("fact", "competitor"), ("evidence", "competitor"), ("competitor", "research_run")],
+)
+def test_duplicate_role_context_ids_are_rejected(role_kind, scope):
+    payload = wire_payload(valid_payload(scope))
+    if role_kind == "fact":
+        payload["statements"][0]["fact_roles"] = [
+            {"context_id": "FACT_001", "role": "supports"},
+            {"context_id": "FACT_001", "role": "contradicts"},
+        ]
+    elif role_kind == "evidence":
+        payload["statements"][0]["evidence_roles"] = [
+            {"context_id": "EVIDENCE_001", "role": "quotes"},
+            {"context_id": "EVIDENCE_001", "role": "supports"},
+        ]
+    else:
+        payload["statements"] = []
+        payload["comparisons"] = [{
+            "comparison_id": "COMPARISON_001",
+            "comparison_type": "pricing",
+            "dimension": "starting_price",
+            "statement": "The listed starting prices differ.",
+            "support_status": "supported",
+            "competitor_context_ids": ["COMPETITOR_001", "COMPETITOR_002"],
+            "fact_context_ids": [],
+            "evidence_context_ids": [],
+            "source_context_ids": [],
+            "competitor_roles": [
+                {"context_id": "COMPETITOR_001", "role": "subject"},
+                {"context_id": "COMPETITOR_001", "role": "compared"},
+            ],
+        }]
+
+    provider = GeminiProvider(
+        config=GeminiProviderConfig(api_key="test-key"),
+        client=FakeClient(response=FakeResponse(parsed=payload)),
+    )
+    context = make_research_run_context() if scope == "research_run" else make_context()
+
+    with pytest.raises(ProviderInvalidOutputError, match=f"duplicate {role_kind} role context ID"):
+        provider.analyze(context)
 
 
 def test_invalid_structured_response_is_rejected():
