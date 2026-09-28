@@ -10,7 +10,7 @@ export function CompetitorList({
 }) {
   if (competitors.length === 0) {
     return (
-      <div className="rounded-[24px] border border-white/10 bg-[rgba(255,255,255,0.02)] p-6 text-sm leading-7 text-[var(--muted)] sm:text-base">
+      <div className="rounded-[24px] border border-[var(--border)] bg-[var(--surface-subtle)] p-6 text-sm leading-7 text-[var(--foreground-secondary)] sm:text-base">
         No relevant competitors were identified.
       </div>
     );

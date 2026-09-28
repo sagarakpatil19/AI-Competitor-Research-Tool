@@ -13,43 +13,37 @@ export function CompetitorCard({
     : `/research/competitors/${encodeURIComponent(competitor.id)}`;
 
   return (
-    <Link href={detailHref} className="group block rounded-[28px] border border-[var(--light-border)] bg-[var(--white)] p-5 shadow-[0_18px_34px_rgba(19,48,95,0.04)] transition hover:-translate-y-0.5 hover:border-[var(--primary-blue)]/30 hover:shadow-[0_20px_40px_rgba(19,48,95,0.06)] sm:p-6">
+    <Link href={detailHref} className="block rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_12px_26px_rgba(16,42,86,0.02)] transition hover:border-[var(--primary-blue)]/30 hover:bg-[var(--surface-subtle)] sm:p-5">
       <article>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
-            <h3 className="text-xl font-semibold tracking-[-0.04em] text-[var(--primary-navy)]">{competitor.name}</h3>
+            <h3 className="text-lg font-semibold text-[var(--foreground)]">{competitor.name}</h3>
             {competitor.category && (
-              <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--primary-blue)]">
+              <p className="mt-2 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--primary-blue)]">
                 {competitor.category}
               </p>
             )}
           </div>
 
           {competitor.website && (
-            <span className="inline-flex items-center rounded-full border border-[var(--light-border)] bg-[var(--secondary-light-blue)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--primary-blue)]">
-              {new URL(competitor.website).hostname.replace("www.", "")}
+            <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--surface-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)]">
+              Visit website
             </span>
           )}
         </div>
 
         {competitor.description && (
-          <p className="mt-4 text-sm leading-7 text-[var(--secondary-text)] sm:text-base">{competitor.description}</p>
+          <p className="mt-4 text-sm leading-7 text-[var(--foreground-secondary)] sm:text-base">{competitor.description}</p>
         )}
 
         {competitor.discoveryReason && (
-          <div className="mt-4 rounded-[20px] border border-[var(--light-border)] bg-[var(--secondary-light-blue)] p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--primary-blue)]">
+          <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-subtle)] p-3.5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--foreground-secondary)]">
               Why identified
             </p>
-            <p className="mt-2 text-sm leading-6 text-[var(--secondary-text)]">{competitor.discoveryReason}</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--foreground)]">{competitor.discoveryReason}</p>
           </div>
         )}
-
-        <div className="mt-5 flex justify-end">
-          <span className="inline-flex items-center justify-center rounded-2xl bg-[var(--primary-blue)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(50,111,234,0.2)] transition group-hover:-translate-y-0.5">
-            Research Competitor →
-          </span>
-        </div>
       </article>
     </Link>
   );

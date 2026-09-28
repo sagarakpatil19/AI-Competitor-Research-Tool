@@ -637,35 +637,26 @@ function CompetitorResearchPageContent() {
     return () => window.clearTimeout(timer);
   }, [companyQuery, competitorKey]);
 
-  const findings = MOCK_COMPETITOR_FINDINGS[competitorKey] ?? null;
-
-  const hasPartialFindings =
-    !findings ||
-    findings.products.length === 0 ||
-    findings.features.length === 0 ||
-    findings.targetAudience.length === 0 ||
-    findings.customerFeedback.length === 0;
-
   if (!companyQuery) {
     return (
-      <main className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
+      <main className="min-h-screen bg-[#F7FAFF] text-[#102A56]">
         <div className="mx-auto max-w-3xl px-4 py-16 sm:px-6 lg:px-8">
-          <section className="rounded-[28px] border border-[var(--light-border)] bg-[linear-gradient(180deg,#FFFFFF_0%,#F5F9FF_100%)] p-6 shadow-[0_24px_60px_rgba(19,48,95,0.06)] sm:p-8">
-            <div className="mb-6 inline-flex items-center rounded-full border border-[var(--soft-blue)] bg-[var(--secondary-light-blue)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.26em] text-[var(--primary-blue)] sm:text-[11px]">
+          <section className="rounded-[28px] border border-[#DCE6F5] bg-[linear-gradient(180deg,#FFFFFF_0%,#F7FAFF_100%)] p-6 shadow-[0_20px_40px_rgba(16,42,86,0.06)] sm:p-8">
+            <div className="mb-6 inline-flex items-center rounded-full border border-[#DCE6F5] bg-[#F3F7FF] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.26em] text-[#326FEA] sm:text-[11px]">
               AI COMPETITOR RESEARCH
             </div>
 
-            <h1 className="text-3xl font-semibold tracking-[-0.05em] text-[var(--primary-navy)] sm:text-4xl">
+            <h1 className="text-3xl font-semibold tracking-[-0.05em] text-[#102A56] sm:text-4xl">
               Company information is missing.
             </h1>
 
-            <p className="mt-4 text-base leading-7 text-[var(--secondary-text)]">
+            <p className="mt-4 text-base leading-7 text-[#52627A]">
               A company name or website URL is required to view competitor research findings.
             </p>
 
             <Link
               href="/"
-              className="mt-6 inline-flex h-[52px] items-center justify-center rounded-xl bg-[var(--primary-blue)] px-5 text-sm font-semibold text-white transition hover:bg-[var(--blue-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-blue)]/30"
+              className="mt-6 inline-flex h-[52px] items-center justify-center rounded-xl bg-[#326FEA] px-5 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-[#245CCB] focus:outline-none focus:ring-2 focus:ring-[#326FEA]/25"
             >
               Return to home
             </Link>
@@ -675,33 +666,35 @@ function CompetitorResearchPageContent() {
     );
   }
 
+  const findings = MOCK_COMPETITOR_FINDINGS[competitorKey] ?? null;
+
   if (!competitorKey || !findings) {
     return (
-      <main className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
+      <main className="min-h-screen bg-[#F7FAFF] text-[#102A56]">
         <div className="mx-auto max-w-3xl px-4 py-16 sm:px-6 lg:px-8">
-          <section className="rounded-[28px] border border-[var(--light-border)] bg-[linear-gradient(180deg,#FFFFFF_0%,#F5F9FF_100%)] p-6 shadow-[0_24px_60px_rgba(19,48,95,0.06)] sm:p-8">
-            <div className="mb-6 inline-flex items-center rounded-full border border-[var(--soft-blue)] bg-[var(--secondary-light-blue)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.26em] text-[var(--primary-blue)] sm:text-[11px]">
+          <section className="rounded-[28px] border border-[#DCE6F5] bg-[linear-gradient(180deg,#FFFFFF_0%,#F7FAFF_100%)] p-6 shadow-[0_20px_40px_rgba(16,42,86,0.06)] sm:p-8">
+            <div className="mb-6 inline-flex items-center rounded-full border border-[#DCE6F5] bg-[#F3F7FF] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.26em] text-[#326FEA] sm:text-[11px]">
               AI COMPETITOR RESEARCH
             </div>
 
-            <h1 className="text-3xl font-semibold tracking-[-0.05em] text-[var(--primary-navy)] sm:text-4xl">
+            <h1 className="text-3xl font-semibold tracking-[-0.05em] text-[#102A56] sm:text-4xl">
               Competitor information is missing.
             </h1>
 
-            <p className="mt-4 text-base leading-7 text-[var(--secondary-text)]">
+            <p className="mt-4 text-base leading-7 text-[#52627A]">
               No competitor findings were available for this route in the current frontend mock dataset.
             </p>
 
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
               <Link
                 href={`/research/competitors?company=${encodeURIComponent(companyQuery)}`}
-                className="inline-flex h-[52px] items-center justify-center rounded-xl bg-[var(--primary-blue)] px-5 text-sm font-semibold text-white transition hover:bg-[var(--blue-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-blue)]/30"
+                className="inline-flex h-[52px] items-center justify-center rounded-xl bg-[#326FEA] px-5 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-[#245CCB] focus:outline-none focus:ring-2 focus:ring-[#326FEA]/25"
               >
                 Back to competitor discovery
               </Link>
               <Link
                 href="/"
-                className="inline-flex h-[52px] items-center justify-center rounded-xl border border-[var(--light-border)] bg-white px-5 text-sm font-medium text-[var(--primary-navy)] transition hover:border-[var(--primary-blue)] hover:text-[var(--primary-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-blue)]/20"
+                className="inline-flex h-[52px] items-center justify-center rounded-xl border border-[#DCE6F5] bg-white px-5 text-sm font-medium text-[#102A56] transition hover:border-[#326FEA]/30 hover:text-[#326FEA] focus:outline-none focus:ring-2 focus:ring-[#326FEA]/20"
               >
                 Return to home
               </Link>
@@ -712,105 +705,66 @@ function CompetitorResearchPageContent() {
     );
   }
 
+  const hasPartialFindings =
+    findings.products.length === 0 ||
+    findings.features.length === 0 ||
+    findings.targetAudience.length === 0 ||
+    findings.positioning.length === 0;
+
   return (
-    <main className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
-        <header className="mb-6 flex items-center justify-between rounded-full border border-[var(--light-border)] bg-[rgba(255,255,255,0.75)] px-4 py-3 shadow-[0_10px_24px_rgba(19,48,95,0.04)] backdrop-blur-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--soft-blue)] bg-[var(--secondary-light-blue)] text-[10px] font-semibold text-[var(--primary-blue)]">
-              AI
-            </div>
-            <span className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--primary-navy)]">
-              AI Competitor Research
-            </span>
-          </div>
-
-          <Link
-            href={`/research/competitors?company=${encodeURIComponent(companyQuery)}`}
-            className="text-sm font-medium text-[var(--secondary-text)] transition hover:text-[var(--primary-blue)]"
-          >
-            ← Competitor Discovery
-          </Link>
-        </header>
-
-        <section className="overflow-hidden rounded-[32px] border border-[var(--light-border)] bg-[linear-gradient(180deg,#FFFFFF_0%,#F5F9FF_100%)] shadow-[0_24px_60px_rgba(19,48,95,0.06)]">
-          <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
-            <div className="mb-6 flex flex-wrap gap-2">
-              {[
-                { label: "Company", complete: true },
-                { label: "Understanding", complete: true },
-                { label: "Competitors", complete: true },
-                { label: "Research", complete: true, active: true },
-                { label: "Report", complete: false },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  className={[
-                    "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em]",
-                    item.complete
-                      ? "border-[var(--soft-blue)] bg-[var(--secondary-light-blue)] text-[var(--primary-blue)]"
-                      : item.active
-                        ? "border-[var(--primary-blue)] bg-[var(--primary-blue)] text-white"
-                        : "border-[var(--light-border)] bg-white text-[var(--secondary-text)]",
-                  ].join(" ")}
-                >
-                  <span>{item.complete ? "✓" : item.active ? "●" : "○"}</span>
-                  {item.label}
-                </div>
-              ))}
+    <main className="min-h-screen bg-[#F7FAFF] text-[#102A56]">
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <section className="overflow-hidden rounded-[28px] border border-[#DCE6F5] bg-[linear-gradient(180deg,#FFFFFF_0%,#F7FAFF_100%)] shadow-[0_24px_60px_rgba(16,42,86,0.08)]">
+          <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-10 lg:py-14">
+            <div className="mb-6 inline-flex items-center rounded-full border border-[#DCE6F5] bg-[#F3F7FF] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.26em] text-[#326FEA] sm:text-[11px]">
+              AI COMPETITOR RESEARCH
             </div>
 
             <header className="mb-8">
-              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--primary-blue)] sm:text-xs">
-                Research
+              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.24em] text-[#326FEA] sm:text-xs">
+                Competitor Research Findings
               </p>
-              <h1 className="text-3xl font-semibold tracking-[-0.06em] text-[var(--primary-navy)] sm:text-4xl lg:text-[3rem]">
-                Competitor Research
+              <h1 className="text-3xl font-semibold tracking-[-0.06em] text-[#102A56] sm:text-4xl lg:text-5xl">
+                {findings.competitorName}
               </h1>
-              <p className="mt-4 max-w-2xl text-sm leading-7 text-[var(--secondary-text)] sm:text-base">
-                What we learned about {findings.competitorName} and the strengths, positioning, and expectations that shape its role in the market.
+              <p className="mt-4 text-sm leading-7 text-[#52627A] sm:text-base">
+                Researching for: {companyQuery}
               </p>
             </header>
 
+            <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <Link
+                href={`/research/competitors?company=${encodeURIComponent(companyQuery)}`}
+                className="inline-flex h-11 items-center justify-center rounded-xl border border-[#DCE6F5] bg-white px-4 text-sm font-medium text-[#102A56] transition hover:border-[#326FEA]/30 hover:text-[#326FEA] focus:outline-none focus:ring-2 focus:ring-[#326FEA]/20"
+              >
+                ← Back to Competitor Discovery
+              </Link>
+
+              <Link
+                href={`/research/company?company=${encodeURIComponent(companyQuery)}`}
+                className="inline-flex h-11 items-center justify-center rounded-xl border border-[#DCE6F5] bg-white px-4 text-sm font-medium text-[#102A56] transition hover:border-[#326FEA]/30 hover:text-[#326FEA] focus:outline-none focus:ring-2 focus:ring-[#326FEA]/20"
+              >
+                Back to Company Understanding
+              </Link>
+            </div>
+
             {isResearching ? (
-              <div className="rounded-[24px] border border-[var(--light-border)] bg-white p-5 shadow-[0_18px_34px_rgba(19,48,95,0.04)] sm:p-6">
+              <div className="rounded-[24px] border border-[#DCE6F5] bg-[#F3F7FF] p-5 sm:p-6">
                 <div className="flex items-center gap-3">
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[var(--primary-blue)] border-t-transparent" aria-hidden="true" />
-                  <p className="text-base font-medium text-[var(--primary-navy)]">Researching competitor findings...</p>
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#326FEA] border-t-transparent" aria-hidden="true" />
+                  <p className="text-base font-medium text-[#102A56]">Researching competitor...</p>
                 </div>
               </div>
             ) : hasPartialFindings ? (
-              <div className="rounded-[24px] border border-[var(--light-border)] bg-white p-5 shadow-[0_18px_34px_rgba(19,48,95,0.04)] sm:p-6">
-                <p className="text-lg font-medium text-[var(--primary-navy)]">Some research details may be incomplete.</p>
-                <p className="mt-3 text-sm leading-7 text-[var(--secondary-text)] sm:text-base">
-                  We have partial findings for {findings.competitorName}, but not every section is fully populated in this mock experience.
-                </p>
+              <div className="rounded-[24px] border border-[#DCE6F5] bg-[#F3F7FF] p-5 sm:p-6">
+                <p className="text-lg font-medium text-[#102A56]">Some research information may be incomplete.</p>
               </div>
             ) : findings.products.length === 0 ? (
-              <div className="rounded-[24px] border border-[var(--light-border)] bg-white p-5 shadow-[0_18px_34px_rgba(19,48,95,0.04)] sm:p-6">
-                <p className="text-lg font-medium text-[var(--primary-navy)]">No research findings were identified.</p>
-                <p className="mt-3 text-sm leading-7 text-[var(--secondary-text)] sm:text-base">
-                  There is no research data available for {findings.competitorName} in the current mock dataset.
-                </p>
+              <div className="rounded-[24px] border border-[#DCE6F5] bg-[#F3F7FF] p-5 sm:p-6">
+                <p className="text-lg font-medium text-[#102A56]">No research findings were identified for this competitor.</p>
               </div>
             ) : (
-              <>
-                <div className="mb-6 rounded-[22px] border border-[var(--light-border)] bg-[var(--secondary-light-blue)] p-4 text-sm leading-7 text-[var(--secondary-text)] sm:text-base">
-                  <span className="font-semibold text-[var(--primary-navy)]">{findings.competitorName}:</span> a focused summary of what the research surfaced about the competitor and how it compares in the current market context.
-                </div>
-
-                <CompetitorResearchFindingsComponent findings={findings} />
-
-                <div className="mt-8 flex justify-center">
-                  <Link
-                    href={`/research/report?company=${encodeURIComponent(companyQuery)}`}
-                    aria-label="View Final Research Report"
-                    className="inline-flex h-[52px] items-center justify-center rounded-xl bg-[var(--primary-blue)] px-5 text-sm font-semibold text-white transition hover:bg-[var(--blue-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-blue)]/30"
-                  >
-                    View Final Report →
-                  </Link>
-                </div>
-              </>
+              <CompetitorResearchFindingsComponent findings={findings} />
             )}
           </div>
         </section>
@@ -823,10 +777,10 @@ export default function CompetitorResearchPage() {
   return (
     <Suspense
       fallback={
-        <main className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
+        <main className="min-h-screen bg-[#F7FAFF] text-[#102A56]">
           <div className="mx-auto max-w-3xl px-4 py-16 sm:px-6 lg:px-8">
-            <div className="rounded-[28px] border border-[var(--light-border)] bg-[linear-gradient(180deg,#FFFFFF_0%,#F5F9FF_100%)] p-8 shadow-[0_24px_60px_rgba(19,48,95,0.06)]">
-              <p className="text-sm text-[var(--secondary-text)]">Loading competitor research findings...</p>
+            <div className="rounded-[28px] border border-[#DCE6F5] bg-[linear-gradient(180deg,#FFFFFF_0%,#F7FAFF_100%)] p-8 shadow-[0_20px_40px_rgba(16,42,86,0.06)]">
+              <p className="text-sm text-[#52627A]">Loading competitor research findings...</p>
             </div>
           </div>
         </main>

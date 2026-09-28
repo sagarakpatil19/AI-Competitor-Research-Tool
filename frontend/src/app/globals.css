@@ -21,6 +21,63 @@
   --coral: #326FEA;
   --gold: #326FEA;
   --mint: #E3F8F5;
+  --surface: #FFFFFF;
+  --surface-strong: #EEF5FF;
+  --surface-subtle: #F3F7FF;
+  --foreground: #102A56;
+  --foreground-secondary: #52627A;
+  --primary: #326FEA;
+  --primary-hover: #245CCB;
+  --accent: #EAF2FF;
+  --border: #DCE6F5;
+  --shadow: rgba(19, 48, 95, 0.08);
+  --selection: rgba(50, 111, 234, 0.15);
+  --radius-xl: 28px;
+  --background-glow-1: rgba(220, 234, 255, 0.7);
+  --background-glow-2: rgba(227, 248, 245, 0.8);
+  --success: #2F8F68;
+  --warning: #C58A22;
+  --error: #C94B4B;
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  --background: #071827;
+  --secondary-light-blue: #10263f;
+  --soft-blue: #163b68;
+  --very-soft-blue: #11283f;
+  --soft-cyan: #123d48;
+  --white: #0d1d2d;
+  --primary-navy: #EAF3FF;
+  --deep-navy: #DDEBFF;
+  --secondary-text: #A9B8CC;
+  --light-border: #203448;
+  --primary-blue: #6ca2ff;
+  --blue-hover: #8db8ff;
+  --foreground: #EAF3FF;
+  --ink: #EAF3FF;
+  --paper: #0f1f31;
+  --panel: #12263d;
+  --muted: #A9B8CC;
+  --coral: #6ca2ff;
+  --gold: #6ca2ff;
+  --mint: #123d48;
+  --surface: #0f1f31;
+  --surface-strong: #11263d;
+  --surface-subtle: #11283f;
+  --foreground-secondary: #A9B8CC;
+  --primary: #6ca2ff;
+  --primary-hover: #8db8ff;
+  --accent: #163b68;
+  --border: #203448;
+  --shadow: rgba(3, 10, 16, 0.56);
+  --selection: rgba(108, 162, 255, 0.22);
+  --background-glow-1: rgba(17, 30, 45, 0.9);
+  --background-glow-2: rgba(9, 18, 30, 0.82);
+  --success: #7ED7A8;
+  --warning: #E2AA4A;
+  --error: #FF8D8D;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -42,9 +99,9 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(circle at top left, rgba(220, 234, 255, 0.9), transparent 22%),
-    radial-gradient(circle at top right, rgba(227, 248, 245, 0.8), transparent 20%),
-    linear-gradient(180deg, #F7FAFF 0%, #EEF5FF 100%);
+    radial-gradient(circle at top left, var(--background-glow-1), transparent 22%),
+    radial-gradient(circle at top right, var(--background-glow-2), transparent 20%),
+    linear-gradient(180deg, var(--background) 0%, var(--secondary-light-blue) 100%);
   color: var(--foreground);
   font-family: var(--font-geist-sans), sans-serif;
 }
@@ -67,6 +124,6 @@ img {
 }
 
 ::selection {
-  background: rgba(50, 111, 234, 0.15);
+  background: var(--selection);
   color: var(--primary-navy);
 }

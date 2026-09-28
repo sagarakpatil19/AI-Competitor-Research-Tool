@@ -17,7 +17,7 @@ export function ResearchStage({
   const labelMap = {
     completed: { text: "Completed", icon: "✓", classes: "bg-[var(--soft-blue)] text-[var(--primary-blue)]" },
     running: { text: "In progress", icon: "●", classes: "bg-[var(--secondary-light-blue)] text-[var(--primary-blue)]" },
-    pending: { text: "Upcoming", icon: "○", classes: "bg-[var(--very-soft-blue)] text-[var(--secondary-text)]" },
+    pending: { text: "Upcoming", icon: "○", classes: "bg-[var(--surface-subtle)] text-[var(--foreground-secondary)]" },
     failed: { text: "Needs attention", icon: "!", classes: "bg-[#FDECEC] text-[#C94B4B]" },
   } as const;
 
@@ -28,15 +28,15 @@ export function ResearchStage({
       className={[
         "group relative rounded-[22px] border p-4 transition duration-200",
         isCurrent
-          ? "border-[var(--primary-blue)]/35 bg-[var(--secondary-light-blue)] shadow-[0_12px_24px_rgba(50,111,234,0.08)]"
+          ? "border-[var(--primary-blue)]/35 bg-[var(--surface-strong)] shadow-[0_12px_24px_rgba(50,111,234,0.08)]"
           : isRunning
-            ? "border-[var(--primary-blue)]/25 bg-[var(--very-soft-blue)]"
+            ? "border-[var(--primary-blue)]/25 bg-[var(--surface-subtle)]"
             : isCompleted
-              ? "border-[var(--soft-blue)] bg-[var(--secondary-light-blue)]"
+              ? "border-[var(--border)] bg-[var(--surface-strong)]"
               : isFailed
                 ? "border-[#F5CACA] bg-[#FFF6F6]"
-                : "border-[var(--light-border)] bg-[var(--white)]",
-        "hover:-translate-y-0.5 hover:border-[var(--primary-blue)]/35 hover:bg-[var(--secondary-light-blue)]",
+                : "border-[var(--border)] bg-[var(--surface)]",
+        "hover:-translate-y-0.5 hover:border-[var(--primary-blue)]/35 hover:bg-[var(--surface-strong)]",
       ].join(" ")}
       aria-current={isCurrent ? "step" : undefined}
       aria-label={`${stage.title}: ${statusInfo.text}`}
@@ -51,7 +51,7 @@ export function ResearchStage({
                 ? "bg-[var(--primary-blue)] text-white shadow-[0_10px_18px_rgba(50,111,234,0.18)]"
                 : isFailed
                   ? "bg-[#FDECEC] text-[#C94B4B]"
-                  : "bg-[var(--very-soft-blue)] text-[var(--secondary-text)] border border-[var(--light-border)]",
+                  : "bg-[var(--surface-subtle)] text-[var(--foreground-secondary)] border border-[var(--border)]",
           ].join(" ")}
           aria-hidden="true"
         >
@@ -60,7 +60,7 @@ export function ResearchStage({
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-base font-semibold text-[var(--primary-navy)]">{stage.title}</p>
+            <p className="text-base font-semibold text-[var(--foreground)]">{stage.title}</p>
             <span
               className={[
                 "inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]",
@@ -72,7 +72,7 @@ export function ResearchStage({
             </span>
           </div>
 
-          <p className="mt-2 text-sm leading-6 text-[var(--secondary-text)]">{stage.description}</p>
+          <p className="mt-2 text-sm leading-6 text-[var(--foreground-secondary)]">{stage.description}</p>
         </div>
       </div>
     </div>

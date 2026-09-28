@@ -8,18 +8,16 @@ export function SourceCard({ source }: { source: Source }) {
   ].filter(Boolean) as string[];
 
   return (
-    <div className="rounded-2xl border border-[var(--light-border)] bg-white p-3.5 shadow-[0_12px_24px_rgba(19,48,95,0.03)]">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-subtle)] p-3.5">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium text-[var(--primary-navy)]">
-          {source.title || "Mock source"}
-        </p>
-        <span className="rounded-full border border-[var(--soft-blue)] bg-[var(--secondary-light-blue)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--primary-blue)]">
+        <p className="text-sm font-medium text-[var(--foreground)]">{source.title || "Mock source"}</p>
+        <span className="rounded-full border border-[var(--primary-blue)]/25 bg-[var(--accent)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--primary-blue)]">
           Mock source
         </span>
       </div>
 
       {metadata.length > 0 && (
-        <ul className="mt-3 space-y-1 text-xs leading-6 text-[var(--secondary-text)] sm:text-sm">
+        <ul className="mt-3 space-y-1 text-xs leading-6 text-[var(--foreground-secondary)] sm:text-sm">
           {metadata.map((item) => (
             <li key={item}>{item}</li>
           ))}
@@ -31,7 +29,7 @@ export function SourceCard({ source }: { source: Source }) {
           href={source.url}
           target="_blank"
           rel="noreferrer noopener"
-          className="mt-3 inline-flex items-center text-sm font-medium text-[var(--primary-blue)] underline decoration-[var(--primary-blue)]/60 underline-offset-4 transition hover:text-[var(--blue-hover)]"
+          className="mt-3 inline-flex items-center text-sm font-medium text-[var(--primary-blue)] underline decoration-[var(--primary-blue)]/60 underline-offset-4 hover:text-[var(--primary-hover)]"
         >
           View placeholder source link
         </a>

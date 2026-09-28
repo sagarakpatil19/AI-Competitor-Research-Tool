@@ -8,7 +8,7 @@ export function CompanyInfoSection({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[28px] border border-[var(--light-border)] bg-[var(--white)] p-5 shadow-[0_18px_34px_rgba(19,48,95,0.04)] sm:p-6">
+    <section className="rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[0_18px_34px_rgba(16,42,86,0.04)] sm:p-6">
       <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--primary-blue)]">{title}</p>
       {children}
     </section>
