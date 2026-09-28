@@ -22,6 +22,7 @@ from app.background.worker import (
     DuplicateCommandError,
     classify_background_failure,
 )
+from app.services.research import SourceCollectionError
 
 
 class FakeAIProvider:
@@ -152,6 +153,112 @@ def test_worker_closes_session_when_dispatch_raises():
     assert result.status == "failed"
     assert isinstance(result.result, ValueError)
     assert session.closed is True
+
+
+def test_worker_retries_session_factory_timeout_and_clears_inflight_state():
+    queue = InMemoryQueue()
+    command = CompetitorDiscoveryCommand(research_run_id=22)
+    queue.enqueue(command)
+    session = FakeSession({})
+    factory_calls = 0
+
+    def session_factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        if factory_calls == 1:
+            raise TimeoutError("temporary database connection timeout")
+        return session
+
+    worker = BackgroundWorker(
+        queue=queue,
+        dispatcher=BackgroundDispatcher(competitor_discovery_service=lambda db, run_id: "ok"),
+        db_session_factory=session_factory,
+    )
+
+    first_result = worker.run_once()
+
+    assert first_result is not None and first_result.status == "retry_scheduled"
+    assert worker._inflight_logical_ids == set()
+    assert len(queue) == 1
+
+    second_result = worker.run_once()
+
+    assert second_result is not None and second_result.status == "completed"
+    assert worker._inflight_logical_ids == set()
+    assert len(queue) == 0
+    assert session.closed is True
+
+
+def test_worker_session_factory_validation_failure_is_terminal():
+    queue = InMemoryQueue()
+    command = CompetitorDiscoveryCommand(research_run_id=23)
+    queue.enqueue(command)
+    worker = BackgroundWorker(
+        queue=queue,
+        dispatcher=BackgroundDispatcher(competitor_discovery_service=lambda db, run_id: "unreachable"),
+        db_session_factory=lambda: (_ for _ in ()).throw(ValueError("invalid session configuration")),
+    )
+
+    result = worker.run_once()
+
+    assert result is not None and result.status == "failed"
+    assert worker._inflight_logical_ids == set()
+    assert len(queue) == 0
+
+
+@pytest.mark.parametrize(
+    ("category", "retryable"),
+    [
+        ("timeout", True),
+        ("connection_failure", True),
+        ("http_5xx", True),
+        ("unsafe_destination", False),
+        ("unsupported_content_type", False),
+        ("http_4xx", False),
+    ],
+)
+def test_source_collection_failure_classification(category, retryable):
+    error = SourceCollectionError(category, "safe source retrieval failure")
+
+    failure = classify_background_failure(error)
+
+    assert failure.retryable is retryable
+    assert failure.message == "safe source retrieval failure"
+
+
+@pytest.mark.parametrize(
+    ("category", "expected_status"),
+    [
+        ("timeout", "retry_scheduled"),
+        ("connection_failure", "retry_scheduled"),
+        ("http_5xx", "retry_scheduled"),
+        ("unsafe_destination", "failed"),
+        ("unsupported_content_type", "failed"),
+        ("http_4xx", "failed"),
+    ],
+)
+def test_source_collection_retry_policy(category, expected_status, monkeypatch):
+    queue = InMemoryQueue()
+    queue.enqueue(
+        SourceCollectionCommand(
+            research_run_id=24,
+            competitor_id=25,
+            competitor_research_id=26,
+            source_id=27,
+        )
+    )
+    monkeypatch.setattr("app.background.dispatcher.get_research_run", lambda db, run_id: object())
+
+    def fail_collection(*args):
+        raise SourceCollectionError(category, "safe source retrieval failure")
+
+    dispatcher = BackgroundDispatcher(source_collection_service=fail_collection)
+    worker = BackgroundWorker(queue=queue, dispatcher=dispatcher, db_session_factory=lambda: object())
+
+    result = worker.run_once()
+
+    assert result is not None and result.status == expected_status
+    assert len(queue) == (1 if expected_status == "retry_scheduled" else 0)
 
 
 @pytest.mark.parametrize(

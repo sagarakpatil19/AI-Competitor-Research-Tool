@@ -102,7 +102,7 @@ def operation_to_response(
     db: Session | None = None,
 ) -> BackgroundOperationResponse:
     result = None
-    if db is not None and operation.status == "completed":
+    if db is not None and operation.result is not None:
         result = _result_to_response(operation.command, operation.result, db)
     return BackgroundOperationResponse(
         logical_id=operation.logical_id,

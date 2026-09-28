@@ -1333,7 +1333,7 @@ def test_collect_source_failure_persists_failed_state_without_evidence(client, m
 
     assert source is not None
     assert source.status == "failed"
-    assert source.attempt_count == 1
+    assert source.attempt_count == 3
     assert source.last_attempted_at is not None
     assert source.failure_category == "timeout"
     assert source.failure_reason == "Source request timed out"
@@ -1342,10 +1342,21 @@ def test_collect_source_failure_persists_failed_state_without_evidence(client, m
 
 
 @pytest.mark.parametrize(
-    ("status_code", "category"),
-    [(404, "http_4xx"), (403, "http_4xx"), (500, "http_5xx"), (503, "http_5xx")],
+    ("status_code", "category", "expected_attempt_count"),
+    [
+        (404, "http_4xx", 1),
+        (403, "http_4xx", 1),
+        (500, "http_5xx", 3),
+        (503, "http_5xx", 3),
+    ],
 )
-def test_collect_source_persists_http_failure_state(client, monkeypatch, status_code, category):
+def test_collect_source_persists_http_failure_state(
+    client,
+    monkeypatch,
+    status_code,
+    category,
+    expected_attempt_count,
+):
     _, _, _, endpoint = create_source_foundation(client)
     registered = client.post(endpoint, json={"source_url": "https://example.com"}).json()["source"]
 
@@ -1374,7 +1385,7 @@ def test_collect_source_persists_http_failure_state(client, monkeypatch, status_
 
     assert source is not None
     assert source.status == "failed"
-    assert source.attempt_count == 1
+    assert source.attempt_count == expected_attempt_count
     assert source.last_attempted_at is not None
     assert source.failure_category == category
     assert source.last_http_status == status_code

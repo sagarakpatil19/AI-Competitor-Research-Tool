@@ -18,6 +18,18 @@ uvicorn app.main:app --reload --port 8000
 
 The health endpoint is available at `http://localhost:8000/api/health`.
 
+## Background runtime deployment model
+
+The MVP background runtime is process-local: its queue and background-operation status are held in memory. Run the backend as exactly one Uvicorn worker in one application process and one replica. Multi-worker and multi-replica deployments are not supported because they do not share queue or operation state.
+
+Pending background work and in-memory operation status can be lost when the process restarts or terminates. The runtime is not durable across restarts. The `--reload` option shown in the local development command is for development only and must not be treated as a production deployment configuration.
+
+For a single-process deployment, start Uvicorn without reload and with one worker:
+
+```powershell
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+```
+
 ## Alembic migrations
 
 Set `DATABASE_URL` in the backend environment before running migrations:

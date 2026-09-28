@@ -13,6 +13,7 @@ from app.background.commands import BackgroundCommand
 from app.background.dispatcher import BackgroundDispatcher
 from app.background.queue import QueueProtocol
 from app.services.ai_analysis import AIAnalysisExecutionFailure
+from app.services.research import SourceCollectionError
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,12 @@ class DuplicateCommandError(RuntimeError):
 
 
 def classify_background_failure(exc: BaseException) -> BackgroundFailure:
+    if isinstance(exc, SourceCollectionError) and exc.category in {
+        "timeout",
+        "connection_failure",
+        "http_5xx",
+    }:
+        return BackgroundFailure(category=exc.category, retryable=True, message=str(exc))
     if isinstance(exc, (ProviderUnavailableError, ProviderTimeoutError)):
         return BackgroundFailure(category=type(exc).__name__.lower(), retryable=True, message=str(exc))
     if isinstance(exc, (ProviderResponseError, ProviderInvalidOutputError)):
@@ -84,8 +91,9 @@ class BackgroundWorker:
 
         self._inflight_logical_ids.add(logical_id)
 
-        db_session = self.db_session_factory()
+        db_session: Any | None = None
         try:
+            db_session = self.db_session_factory()
             result = self.dispatcher.dispatch(db_session, command)
             self._terminal_logical_ids.add(logical_id)
             status = "completed"

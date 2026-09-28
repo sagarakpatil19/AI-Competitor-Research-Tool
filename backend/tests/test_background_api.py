@@ -113,6 +113,26 @@ def test_failed_operation_is_observable_as_failed(client):
     assert operation["result"] is None
 
 
+def test_failed_discovery_domain_result_maps_to_failed_operation(client):
+    research_run_id = _create_research_run(client)
+    runtime: BackgroundRuntime = app.state.background_runtime
+    runtime.dispatcher.competitor_discovery_service = lambda db, run_id: SimpleNamespace(
+        id=504,
+        status="failed",
+        failure_category="authentication",
+        failure_reason="Discovery provider authentication failed",
+    )
+
+    response = client.post(f"/api/research-runs/{research_run_id}/competitor-discovery")
+
+    assert response.status_code == 202
+    operation = _poll_operation(client, response)
+    assert operation["status"] == "failed"
+    assert operation["failure_category"] == "authentication"
+    assert operation["failure_reason"] == "Discovery provider authentication failed"
+    assert operation["result"] == {"id": 504}
+
+
 def test_retry_succeeds_with_same_logical_identity(client):
     research_run_id = _create_research_run(client)
     runtime: BackgroundRuntime = app.state.background_runtime

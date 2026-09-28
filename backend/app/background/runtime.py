@@ -122,10 +122,18 @@ class BackgroundRuntime:
                         record.failure_category = failure.category
                         record.failure_reason = failure.message
                     elif execution.status == "completed":
-                        record.status = "completed"
                         record.result = execution.result
-                        record.failure_category = None
-                        record.failure_reason = None
+                        if (
+                            record.operation == "competitor_discovery"
+                            and getattr(execution.result, "status", None) == "failed"
+                        ):
+                            record.status = "failed"
+                            record.failure_category = execution.result.failure_category
+                            record.failure_reason = execution.result.failure_reason
+                        else:
+                            record.status = "completed"
+                            record.failure_category = None
+                            record.failure_reason = None
                     elif execution.status == "failed":
                         record.status = "failed"
                         failure = classify_background_failure(execution.result)

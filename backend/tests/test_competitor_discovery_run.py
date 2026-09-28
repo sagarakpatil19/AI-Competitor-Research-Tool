@@ -281,7 +281,7 @@ def test_discovery_api_provider_failure_returns_failed_run_without_raw_error(
 
     assert response.status_code == 202
     operation = client.get(response.json()["status_url"]).json()
-    assert operation["status"] == "completed"
+    assert operation["status"] == "failed"
     body = operation["result"]["research_run"]
     assert body["status"] == "failed"
     assert body["failure_category"] == "rate_limit"
