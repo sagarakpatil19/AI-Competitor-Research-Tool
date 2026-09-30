@@ -4,13 +4,24 @@ import type { Competitor } from "@/types/competitor";
 export function CompetitorCard({
   competitor,
   companyName,
+  researchId,
 }: {
   competitor: Competitor;
   companyName?: string;
+  researchId?: string;
 }) {
-  const detailHref = companyName
-    ? `/research/competitors/${encodeURIComponent(competitor.id)}?company=${encodeURIComponent(companyName)}`
-    : `/research/competitors/${encodeURIComponent(competitor.id)}`;
+  const query = new URLSearchParams();
+
+  if (companyName) {
+    query.set("company", companyName);
+  }
+
+  if (researchId) {
+    query.set("research_id", researchId);
+  }
+
+  const queryString = query.toString();
+  const detailHref = `/research/competitors/${encodeURIComponent(competitor.id)}${queryString ? `?${queryString}` : ""}`;
 
   return (
     <Link href={detailHref} className="block rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_12px_26px_rgba(16,42,86,0.02)] transition hover:border-[var(--primary-blue)]/30 hover:bg-[var(--surface-subtle)] sm:p-5">

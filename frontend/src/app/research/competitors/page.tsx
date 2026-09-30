@@ -2,81 +2,77 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { CompetitorList } from "@/components/research/CompetitorList";
 import type { Competitor } from "@/types/competitor";
-
-const MOCK_COMPETITORS: Record<string, Competitor[]> = {
-  notion: [
-    {
-      id: "slack",
-      name: "Slack",
-      website: "https://slack.com",
-      category: "Team collaboration",
-      description: "A workspace for team communication, project coordination, and cross-functional work.",
-      discoveryReason: "Overlaps with Notion in the same productivity and collaboration layer for team-based work.",
-    },
-    {
-      id: "asana",
-      name: "Asana",
-      website: "https://asana.com",
-      category: "Project and task management",
-      description: "Helps teams plan work, track execution, and manage shared operational workflows.",
-      discoveryReason: "Shares a similar product positioning around planning, workflows, and knowledge work coordination.",
-    },
-    {
-      id: "trello",
-      name: "Trello",
-      website: "https://trello.com",
-      category: "Workflow management",
-      description: "Provides lightweight boards for organizing tasks, projects, and team work.",
-      discoveryReason: "Competes in the broader workspace productivity category where flexible team planning is a central value proposition.",
-    },
-    {
-      id: "coda",
-      name: "Coda",
-      website: "https://coda.io",
-      category: "Docs and workspaces",
-      description: "Combines documents, structured data, and workflow tools in a shared workspace.",
-      discoveryReason: "Competes with Notion in the document-and-workspace model for teams seeking flexible information systems.",
-    },
-  ],
-};
+import { discoverCompetitors, getApiErrorMessage, mapBackendCompetitors, pollBackgroundOperation, researchCompetitors } from "@/lib/api";
 
 function CompetitorsContent() {
   const searchParams = useSearchParams();
   const companyQuery = searchParams.get("company")?.trim() ?? "";
-  const [isDiscovering, setIsDiscovering] = useState(true);
-
-  const company = companyQuery;
-  const normalizedCompany = company.toLowerCase();
+  const researchId = searchParams.get("research_id")?.trim() ?? "";
+  const [isDiscovering, setIsDiscovering] = useState(Boolean(researchId));
+  const [competitors, setCompetitors] = useState<Competitor[]>([]);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    if (!company) {
+    if (!researchId) {
       setIsDiscovering(false);
+      setCompetitors([]);
       return;
     }
 
-    const timer = window.setTimeout(() => {
-      setIsDiscovering(false);
-    }, 800);
+    let isMounted = true;
 
-    return () => window.clearTimeout(timer);
-  }, [company]);
+    const loadCompetitors = async () => {
+      setIsDiscovering(true);
+      setErrorMessage("");
 
-  const competitors = useMemo(() => {
-    if (!company) {
-      return [] as Competitor[];
-    }
+      try {
+        const operation = await discoverCompetitors(researchId);
+        const finishedOperation = await pollBackgroundOperation(operation.status_url, 120000, 2000);
+        const mapped = mapBackendCompetitors(finishedOperation.result ?? []);
 
-    return MOCK_COMPETITORS[normalizedCompany] ?? [];
-  }, [company, normalizedCompany]);
+        if (mapped.length === 0) {
+          throw new Error("The backend completed competitor discovery without returning any competitors.");
+        }
 
-  const hasIncompleteDiscovery = competitors.some(
-    (competitor) => !competitor.description || !competitor.discoveryReason,
-  );
+        const competitorIds = mapped.map((competitor) => Number(competitor.id)).filter((id) => Number.isInteger(id) && id > 0);
 
-  if (!company) {
+        if (competitorIds.length !== mapped.length) {
+          throw new Error("The backend returned a competitor without a valid numeric ID.");
+        }
+
+        const researchOperation = await researchCompetitors(researchId, competitorIds);
+        await pollBackgroundOperation(researchOperation.status_url, 120000, 2000);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setCompetitors(mapped);
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setCompetitors([]);
+        setErrorMessage(getApiErrorMessage(error, "Competitor discovery is unavailable from the backend right now."));
+      } finally {
+        if (isMounted) {
+          setIsDiscovering(false);
+        }
+      }
+    };
+
+    void loadCompetitors();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [researchId]);
+
+  if (!companyQuery && !researchId) {
     return (
       <main className="min-h-screen bg-[#F7FAFF] text-[#102A56]">
         <div className="mx-auto max-w-3xl px-4 py-16 sm:px-6 lg:px-8">
@@ -105,6 +101,10 @@ function CompetitorsContent() {
     );
   }
 
+  const hasIncompleteDiscovery = competitors.some(
+    (competitor) => !competitor.description || !competitor.discoveryReason,
+  );
+
   return (
     <main className="min-h-screen bg-[#F7FAFF] text-[#102A56]">
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -119,16 +119,16 @@ function CompetitorsContent() {
                 Competitor Discovery
               </p>
               <h1 className="text-3xl font-semibold tracking-[-0.06em] text-[#102A56] sm:text-4xl lg:text-5xl">
-                Companies identified as potential competitors for {company}.
+                Companies identified as potential competitors for {companyQuery || "your company"}.
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-7 text-[#52627A] sm:text-base">
-                This research step identifies companies that may compete with the researched company based on product and market positioning. These are frontend mock examples for workflow demonstration only.
+                This research step identifies companies that may compete with the researched company based on product and market positioning.
               </p>
             </header>
 
             <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
               <Link
-                href={`/research/company?company=${encodeURIComponent(company)}`}
+                href={`/research/company?company=${encodeURIComponent(companyQuery)}&research_id=${encodeURIComponent(researchId)}`}
                 className="inline-flex h-11 items-center justify-center rounded-xl border border-[#DCE6F5] bg-white px-4 text-sm font-medium text-[#102A56] transition hover:border-[#326FEA]/30 hover:text-[#326FEA] focus:outline-none focus:ring-2 focus:ring-[#326FEA]/20"
               >
                 Back to company understanding
@@ -142,29 +142,35 @@ function CompetitorsContent() {
               </Link>
             </div>
 
+            {errorMessage ? (
+              <div className="rounded-[20px] border border-[#F4D5D7] bg-[#FFF6F6] p-4 text-sm leading-6 text-[#7A2F2F]">
+                {errorMessage}
+              </div>
+            ) : null}
+
             {isDiscovering ? (
               <div className="rounded-[24px] border border-[#DCE6F5] bg-[#F3F7FF] p-5 sm:p-6">
                 <div className="flex items-center gap-3">
                   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#326FEA] border-t-transparent" aria-hidden="true" />
-                  <p className="text-base font-medium text-[#102A56]">Discovering competitors...</p>
+                  <p className="text-base font-medium text-[#102A56]">Discovering competitors from the backend...</p>
                 </div>
               </div>
             ) : competitors.length === 0 ? (
               <div className="rounded-[24px] border border-[#DCE6F5] bg-[#F3F7FF] p-5 sm:p-6">
                 <p className="text-lg font-medium text-[#102A56]">No relevant competitors were identified.</p>
                 <p className="mt-3 text-sm leading-7 text-[#52627A] sm:text-base">
-                  This frontend-only mock experience did not identify any relevant competitors for {company}.
+                  The backend did not return any relevant competitors for {companyQuery || "this run"}.
                 </p>
               </div>
             ) : (
               <div className="space-y-4">
                 {hasIncompleteDiscovery && (
                   <div className="rounded-[20px] border border-[#DCE6F5] bg-[#EAF2FF] p-4 text-sm leading-6 text-[#52627A]">
-                    Some discovery information may be incomplete in this mock workflow.
+                    Some discovery fields may be incomplete in the backend result.
                   </div>
                 )}
 
-                <CompetitorList competitors={competitors} companyName={company} />
+                <CompetitorList competitors={competitors} companyName={companyQuery || "Company"} researchId={researchId} />
               </div>
             )}
           </div>

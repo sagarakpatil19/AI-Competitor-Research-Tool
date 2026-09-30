@@ -13,9 +13,9 @@ export function ReportExecutiveSummary({ report }: { report: ResearchReport }) {
         {report.executiveSummary}
       </p>
       <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-subtle)] p-4 text-sm leading-6 text-[var(--foreground-secondary)]">
-        <p className="font-medium text-[var(--foreground)]">Frontend-only mock synthesis</p>
+        <p className="font-medium text-[var(--foreground)]">Live backend synthesis</p>
         <p className="mt-2">
-          This report is a frontend demonstration built from existing mock data, not a verified external research brief.
+          This report reflects the current research run and the most recent backend analysis for the company and its competitor landscape.
         </p>
       </div>
     </section>

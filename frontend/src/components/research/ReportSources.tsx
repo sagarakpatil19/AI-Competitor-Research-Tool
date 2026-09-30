@@ -34,7 +34,7 @@ export function ReportSources({
                 </div>
               ) : (
                 <p className="mt-3 text-sm leading-6 text-[var(--foreground-secondary)]">
-                  Mock source metadata unavailable for this evidence item.
+                  Source metadata is not available for this evidence item yet.
                 </p>
               )}
             </div>

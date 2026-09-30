@@ -4,9 +4,11 @@ import { CompetitorCard } from "./CompetitorCard";
 export function CompetitorList({
   competitors,
   companyName,
+  researchId,
 }: {
   competitors: Competitor[];
   companyName?: string;
+  researchId?: string;
 }) {
   if (competitors.length === 0) {
     return (
@@ -19,7 +21,7 @@ export function CompetitorList({
   return (
     <div className="space-y-4">
       {competitors.map((competitor) => (
-        <CompetitorCard key={competitor.id} competitor={competitor} companyName={companyName} />
+        <CompetitorCard key={competitor.id} competitor={competitor} companyName={companyName} researchId={researchId} />
       ))}
     </div>
   );

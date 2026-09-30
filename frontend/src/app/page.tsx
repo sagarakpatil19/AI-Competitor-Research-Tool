@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { createResearchRun, getApiErrorMessage } from "@/lib/api";
+import { saveActiveResearchId } from "@/lib/research-state";
 
 type FormStatus = "idle" | "error" | "submitting";
 
@@ -86,7 +88,7 @@ export default function Home() {
     setIsAuthenticated(false);
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const trimmedCompany = company.trim();
@@ -100,14 +102,16 @@ export default function Home() {
     setStatus("submitting");
     setValidationMessage("");
 
-    const encodedCompany = encodeURIComponent(trimmedCompany);
-    const targetRoute = isMockAuthenticated()
-      ? `/research/progress?company=${encodedCompany}`
-      : `/login?company=${encodedCompany}`;
+    try {
+      const response = await createResearchRun(trimmedCompany);
+      saveActiveResearchId(String(response.research_id));
 
-    window.setTimeout(() => {
-      router.push(targetRoute);
-    }, 700);
+      const encodedCompany = encodeURIComponent(trimmedCompany);
+      router.push(`/research/progress?company=${encodedCompany}&research_id=${encodeURIComponent(response.research_id)}`);
+    } catch (error) {
+      setStatus("error");
+      setValidationMessage(getApiErrorMessage(error, "The research run could not be started. Please try again."));
+    }
   };
 
   return (
