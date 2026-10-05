@@ -3,9 +3,11 @@ import type { Evidence } from "./evidence";
 import type { Source } from "./source";
 
 export type ReportComparisonRow = {
+  id: string;
   category: string;
   targetCompany: string;
   competitors: Array<{
+    id: string;
     name: string;
     value: string;
   }>;
@@ -14,6 +16,7 @@ export type ReportComparisonRow = {
 export type ReportFindingGroup = {
   title: string;
   findings: Array<{
+    competitorId: string;
     competitorName: string;
     value: string;
     evidence: Evidence[];
@@ -21,6 +24,11 @@ export type ReportFindingGroup = {
 };
 
 export type ReportInsight = {
+  id: string;
+  statementType: string;
+  supportStatus: string;
+  competitorId: string | null;
+  section: string;
   title: string;
   summary: string;
   kind: "analysis" | "pattern";

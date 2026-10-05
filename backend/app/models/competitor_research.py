@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -18,6 +18,11 @@ class CompetitorResearchStatus(str, Enum):
 class CompetitorResearch(Base):
     __tablename__ = "competitor_research"
     __table_args__ = (
+        UniqueConstraint(
+            "research_run_id",
+            "competitor_id",
+            name="uq_competitor_research_run_competitor",
+        ),
         Index("ix_competitor_research_competitor_created", "competitor_id", "created_at"),
         CheckConstraint(
             "status IN ('pending', 'collecting', 'structuring', 'completed', 'failed')",

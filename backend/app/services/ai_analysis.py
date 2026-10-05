@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.ai.contracts import ProviderAnalysisResult, validate_provider_result
 from app.ai.provider import AIProvider
@@ -17,6 +20,7 @@ from app.models.ai_comparison_competitor import AIComparisonCompetitor
 from app.models.ai_statement import AIStatement
 from app.models.ai_statement_evidence import AIStatementEvidence
 from app.models.ai_statement_fact import AIStatementFact
+from app.repositories import ai_analyses as ai_analysis_repository
 
 
 class AIAnalysisExecutionFailure(Exception):
@@ -47,7 +51,7 @@ def execute_ai_analysis(
             raise ValueError("Competitor scope requires competitor_research_id")
         selected_ids: list[int] = [competitor_research_id]
     elif requested_scope == "research_run":
-        selected_ids = list(competitor_research_ids or [])
+        selected_ids = sorted(set(competitor_research_ids or []))
         if not selected_ids:
             raise ValueError("Research-run scope requires explicit competitor_research_ids")
     else:
@@ -61,54 +65,101 @@ def execute_ai_analysis(
         contract_version=contract_version,
         prompt_version=prompt_version,
     )
-
-    analysis = AIAnalysis(
-        research_run_id=research_run_id,
-        competitor_research_id=competitor_research_id,
-        scope=requested_scope,
-        status="pending",
-        provider_name=_provider_name(provider),
-        model_name="unknown",
-        prompt_version=prompt_version,
-        contract_version=contract_version,
-    )
-    db.add(analysis)
-    db.flush()
+    provider_name = _provider_name(provider)
+    model_name = _model_name(provider)
+    request_fingerprint: str | None = None
+    analysis_work_started = False
 
     try:
-        analysis.status = "running"
-        analysis.started_at = datetime.now(timezone.utc)
         context_result = build_analysis_context(db, request)
         context = context_result.context
-        provider_result = provider.analyze(context)
-        validated = validate_provider_result(context, provider_result)
+        request_fingerprint = _request_fingerprint(
+            research_run_id=research_run_id,
+            scope=requested_scope,
+            competitor_research_ids=selected_ids,
+            provider_name=provider_name,
+            model_name=model_name,
+            contract_version=contract_version,
+            prompt_version=prompt_version,
+            input_snapshot_hash=context.snapshot.input_snapshot_hash,
+        )
+        existing = ai_analysis_repository.get_reusable_by_request_fingerprint(
+            db,
+            request_fingerprint,
+        )
+        if existing is not None:
+            return existing
 
-        analysis.provider_name = validated.provider
-        analysis.model_name = validated.model
-        analysis.input_snapshot_hash = context.snapshot.input_snapshot_hash
-        analysis.status = "completed"
-        analysis.completed_at = datetime.now(timezone.utc)
+        analysis = AIAnalysis(
+            research_run_id=research_run_id,
+            competitor_research_id=competitor_research_id,
+            scope=requested_scope,
+            status="pending",
+            provider_name=provider_name,
+            model_name=model_name,
+            prompt_version=prompt_version,
+            contract_version=contract_version,
+            input_snapshot_hash=context.snapshot.input_snapshot_hash,
+            request_fingerprint=request_fingerprint,
+        )
+        try:
+            analysis_work_started = True
+            with db.begin_nested():
+                db.add(analysis)
+                db.flush()
+                analysis.status = "running"
+                analysis.started_at = datetime.now(timezone.utc)
+                provider_result = provider.analyze(context)
+                validated = validate_provider_result(context, provider_result)
 
-        _persist_input_facts(db, analysis.id, context_result.mapping.fact_context_to_database_id, context.facts)
-        _persist_input_evidence(db, analysis.id, context_result.mapping.evidence_context_to_database_id, context.evidence)
-        _persist_statements(db, analysis.id, context_result.mapping, validated)
-        _persist_comparisons(db, analysis.id, context_result.mapping, validated)
+                analysis.provider_name = validated.provider
+                analysis.model_name = validated.model
+                analysis.input_snapshot_hash = context.snapshot.input_snapshot_hash
+                analysis.status = "completed"
+                analysis.completed_at = datetime.now(timezone.utc)
+
+                _persist_input_facts(
+                    db,
+                    analysis.id,
+                    context_result.mapping.fact_context_to_database_id,
+                    context.facts,
+                )
+                _persist_input_evidence(
+                    db,
+                    analysis.id,
+                    context_result.mapping.evidence_context_to_database_id,
+                    context.evidence,
+                )
+                _persist_statements(db, analysis.id, context_result.mapping, validated)
+                _persist_comparisons(db, analysis.id, context_result.mapping, validated)
+        except IntegrityError:
+            existing = ai_analysis_repository.get_reusable_by_request_fingerprint(
+                db,
+                request_fingerprint,
+            )
+            if existing is None:
+                raise
+            return existing
 
         db.commit()
         db.refresh(analysis)
         return analysis
+    except IntegrityError:
+        raise
     except Exception as exc:
         failure_reason = str(exc)[:1000]
-        db.rollback()
+        if not analysis_work_started:
+            db.rollback()
         analysis = AIAnalysis(
             research_run_id=research_run_id,
             competitor_research_id=competitor_research_id,
             scope=requested_scope,
             status="failed",
-            provider_name=_provider_name(provider),
-            model_name="unknown",
+            provider_name=provider_name,
+            model_name=model_name,
             prompt_version=prompt_version,
             contract_version=contract_version,
+            request_fingerprint=request_fingerprint,
             failure_reason=failure_reason,
             completed_at=datetime.now(timezone.utc),
         )
@@ -149,6 +200,43 @@ def _provider_name(provider: AIProvider) -> str:
     if value:
         return str(value)[:100]
     return getattr(provider.__class__, "__name__", "unknown")[:100]
+
+
+def _model_name(provider: AIProvider) -> str:
+    value = getattr(provider, "model_name", None)
+    if value is None:
+        config = getattr(provider, "config", None)
+        value = getattr(config, "model_name", None)
+    if not value:
+        raise ValueError(
+            "AI provider must expose its configured model identity before analysis execution"
+        )
+    return str(value)[:255]
+
+
+def _request_fingerprint(
+    *,
+    research_run_id: int,
+    scope: str,
+    competitor_research_ids: list[int],
+    provider_name: str,
+    model_name: str,
+    contract_version: str,
+    prompt_version: str,
+    input_snapshot_hash: str,
+) -> str:
+    payload = {
+        "research_run_id": research_run_id,
+        "scope": scope,
+        "competitor_research_ids": sorted(set(competitor_research_ids)),
+        "provider_name": provider_name,
+        "model_name": model_name,
+        "contract_version": contract_version,
+        "prompt_version": prompt_version,
+        "input_snapshot_hash": input_snapshot_hash,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _persist_input_facts(
@@ -196,6 +284,7 @@ def _persist_statements(db: Session, analysis_id: int, mapping: Any, result: Pro
         saved = AIStatement(
             analysis_id=analysis_id,
             statement_type=statement.statement_type,
+            section=statement.section,
             text=statement.text,
             support_status=statement.support_status,
             competitor_research_id=competitor_research_id,

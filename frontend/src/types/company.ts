@@ -15,6 +15,7 @@ export type CompanyContext = {
 
 export type CompanyProfile = {
   name: string;
+  domain?: string;
   overview: string;
   industry: string;
   products: CompanyProduct[];

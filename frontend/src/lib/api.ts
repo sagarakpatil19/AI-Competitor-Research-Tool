@@ -83,6 +83,7 @@ export type BackendReportSection = {
   status?: string;
   display_order?: number;
   items?: Array<{
+    id?: string | number;
     item_type?: string;
     display_order?: number;
     ai_statement_id?: string | number | null;
@@ -354,6 +355,16 @@ export async function pollBackgroundOperation(
 
 export function toCompanyProfile(raw: unknown): CompanyProfile {
   const value = (raw ?? {}) as Record<string, unknown>;
+  const name = typeof value.company_name === "string"
+    ? value.company_name
+    : typeof value.name === "string"
+      ? value.name
+      : "";
+  const overview = typeof value.description === "string"
+    ? value.description
+    : typeof value.overview === "string"
+      ? value.overview
+      : "";
 
   const products = Array.isArray(value.products)
     ? value.products.map((product) => {
@@ -390,13 +401,9 @@ export function toCompanyProfile(raw: unknown): CompanyProfile {
     : [];
 
   return {
-    name: typeof value.name === "string" ? value.name : typeof value.company_name === "string" ? value.company_name : "",
-    overview:
-      typeof value.overview === "string"
-        ? value.overview
-        : typeof value.summary === "string"
-          ? value.summary
-          : "",
+    name,
+    domain: typeof value.domain === "string" ? value.domain : undefined,
+    overview,
     industry:
       typeof value.industry === "string"
         ? value.industry
@@ -585,9 +592,13 @@ export function mapBackendReportToResearchReport(raw: Partial<BackendReportRespo
         : typeof comparison.statement === "string"
           ? comparison.statement
           : item.item_type ?? "Insight";
+      const competitorId =
+        normalizeIdentifier(statement.competitor_research_id) ||
+        `statement:${normalizeIdentifier(item.ai_statement_id)}`;
 
       return {
-        competitorName: typeof comparison.dimension === "string" && comparison.dimension.length > 0 ? comparison.dimension : "Competitor",
+        competitorId,
+        competitorName: "Unnamed competitor",
         value: label,
         evidence: [],
       };
@@ -598,27 +609,68 @@ export function mapBackendReportToResearchReport(raw: Partial<BackendReportRespo
     }
   }
 
-  const comparisonRows: ReportComparisonRow[] = sections
-    .filter((section) => Array.isArray(section.items))
-    .map((section) => ({
-      category: typeof section.section === "string" ? section.section : "Comparison",
-      targetCompany: company.name,
-      competitors: (section.items ?? []).map((item) => ({
-        name: item.comparison?.dimension ?? "Competitor",
-        value: item.comparison?.statement ?? item.statement?.text ?? "No comparison detail available.",
-      })),
-    }));
+  const comparisonRows: ReportComparisonRow[] = sections.flatMap((section) =>
+    (section.items ?? []).flatMap((item) => {
+      const comparison = item.comparison;
+      if (!comparison) {
+        return [];
+      }
 
-  const aiInsights: ReportInsight[] = sections
-    .flatMap((section) => (Array.isArray(section.items) ? section.items : []).map((item) => {
-      const statement = item.statement ?? {};
-      const text = typeof statement.text === "string" ? statement.text : typeof item.item_type === "string" ? item.item_type : "AI insight";
-      return {
-        title: section.section ?? "AI insight",
-        summary: text,
-        kind: "analysis",
-      };
-    }));
+      const comparisonId =
+        normalizeIdentifier(comparison.id) ||
+        normalizeIdentifier(item.ai_comparison_id) ||
+        `item:${normalizeIdentifier(item.id)}`;
+      const competitorIds = comparison.competitor_research_ids ?? [];
+
+      return [{
+        id: comparisonId,
+        category: typeof comparison.dimension === "string" && comparison.dimension.trim().length > 0
+          ? comparison.dimension
+          : "Comparison",
+        targetCompany: company.name,
+        competitors: competitorIds.map((competitorResearchId) => {
+          const id = normalizeIdentifier(competitorResearchId);
+          return {
+            id,
+            name: "Unnamed competitor",
+            value: comparison.statement ?? "No comparison detail available.",
+          };
+        }),
+      }];
+    }),
+  );
+
+  const aiInsights: ReportInsight[] = sections.flatMap((section) =>
+    (section.items ?? []).flatMap((item) => {
+      const statement = item.statement;
+      if (!statement) {
+        return [];
+      }
+
+      const id =
+        normalizeIdentifier(statement.id) ||
+        normalizeIdentifier(item.ai_statement_id) ||
+        `item:${normalizeIdentifier(item.id)}`;
+      const sectionName = typeof statement.section === "string" && statement.section.trim().length > 0
+        ? statement.section
+        : typeof section.section === "string" && section.section.trim().length > 0
+          ? section.section
+          : "AI insight";
+
+      return [{
+        id,
+        statementType: statement.statement_type ?? "statement",
+        supportStatus: statement.support_status ?? "unknown",
+        competitorId: normalizeIdentifier(statement.competitor_research_id) || null,
+        section: sectionName,
+        title: sectionName,
+        summary: typeof statement.text === "string" && statement.text.trim().length > 0
+          ? statement.text
+          : "No statement detail available.",
+        kind: "analysis" as const,
+      }];
+    }),
+  );
 
   return {
     company,

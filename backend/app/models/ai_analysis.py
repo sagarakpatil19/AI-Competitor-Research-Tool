@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -10,6 +10,13 @@ class AIAnalysis(Base):
     __tablename__ = "ai_analyses"
     __table_args__ = (
         Index("ix_ai_analyses_research_run_created", "research_run_id", "created_at"),
+        Index(
+            "uq_ai_analyses_reusable_request_fingerprint",
+            "request_fingerprint",
+            unique=True,
+            postgresql_where=text("request_fingerprint IS NOT NULL AND status IN ('pending', 'running', 'completed')"),
+            sqlite_where=text("request_fingerprint IS NOT NULL AND status IN ('pending', 'running', 'completed')"),
+        ),
         CheckConstraint(
             "scope IN ('competitor', 'research_run')",
             name="ck_ai_analyses_scope",
@@ -41,6 +48,7 @@ class AIAnalysis(Base):
     prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
     contract_version: Mapped[str] = mapped_column(String(100), nullable=False)
     input_snapshot_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

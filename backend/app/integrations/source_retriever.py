@@ -16,6 +16,7 @@ import httpx
 MAX_RESPONSE_SIZE = 5 * 1024 * 1024
 MAX_REDIRECTS = 5
 MAX_EXCERPT_LENGTH = 1000
+DNS64_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
 
 
 class RetrievalError(Exception):
@@ -92,6 +93,9 @@ def canonicalize_url(url: str) -> str:
 
 def _is_unsafe_ip(address: str) -> bool:
     ip = ipaddress.ip_address(address)
+    if ip.version == 6 and ip in DNS64_PREFIX:
+        embedded_ipv4 = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        return _is_unsafe_ip(str(embedded_ipv4))
     if ip.version == 6 and ip.ipv4_mapped is not None:
         ip = ip.ipv4_mapped
     return ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_unspecified or ip.is_multicast

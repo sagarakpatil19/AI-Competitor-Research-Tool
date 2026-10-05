@@ -11,7 +11,7 @@ export function ResearchStageList({ stages }: { stages: ResearchStage[] }) {
           <ResearchStageItem
             stage={stage}
             index={index}
-            isCurrent={index === currentStageIndex || (currentStageIndex === -1 && index === stages.length - 1 && stage.status === "pending")}
+            isCurrent={index === currentStageIndex}
           />
         </div>
       ))}

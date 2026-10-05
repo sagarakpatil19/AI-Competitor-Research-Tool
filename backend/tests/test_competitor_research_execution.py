@@ -9,6 +9,7 @@ from app.models import (
     CompanyResearch,
     Competitor,
     CompetitorEvidence,
+    CompetitorResearch,
     CompetitorResearchFact,
     CompetitorResearchSection,
     ResearchInputType,
@@ -47,7 +48,7 @@ def create_execution(db: Session, research_run: ResearchRun, competitor: Competi
     return research_service.create_competitor_research_execution(db, research_run, competitor.id)
 
 
-def test_first_and_second_calls_create_distinct_pending_executions():
+def test_first_and_second_calls_reuse_execution():
     engine, db = make_db()
     try:
         research_run, competitor = create_research_context(db)
@@ -55,9 +56,9 @@ def test_first_and_second_calls_create_distinct_pending_executions():
         first = research_service.research_competitors(db, research_run, [competitor.id])[0]
         second = research_service.research_competitors(db, research_run, [competitor.id])[0]
 
-        assert first.id != second.id
-        assert first.status == "pending"
-        assert second.status == "pending"
+        assert first.id == second.id
+        assert first.status == "completed"
+        assert second.status == "completed"
         assert first.started_at is None
         assert second.started_at is None
         assert first.research_run_id == research_run.id
@@ -99,7 +100,14 @@ def test_new_execution_does_not_modify_historical_data():
         db.commit()
         historical = (first.status, first.started_at, first.completed_at, first.description)
 
-        second = create_execution(db, research_run, competitor)
+        second_competitor = Competitor(
+            research_run_id=research_run.id,
+            name="Second competitor",
+            domain="second.example",
+        )
+        db.add(second_competitor)
+        db.commit()
+        second = create_execution(db, research_run, second_competitor)
         db.expire_all()
         unchanged = db.get(type(first), first.id)
 
@@ -108,6 +116,67 @@ def test_new_execution_does_not_modify_historical_data():
         assert db.scalar(select(CompetitorEvidence.id).where(CompetitorEvidence.competitor_research_id == first.id)) == evidence.id
         assert db.scalar(select(CompetitorResearchFact.id).where(CompetitorResearchFact.competitor_research_id == first.id)) == fact.id
         assert db.scalar(select(CompetitorResearchSection.id).where(CompetitorResearchSection.competitor_research_id == first.id)) == section.id
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_completed_execution_is_reused_without_creating_another_row():
+    engine, db = make_db()
+    try:
+        research_run, competitor = create_research_context(db)
+        first = create_execution(db, research_run, competitor)
+        first.status = "completed"
+        db.commit()
+
+        second = create_execution(db, research_run, competitor)
+
+        assert second.id == first.id
+        assert db.query(type(first)).filter_by(
+            research_run_id=research_run.id,
+            competitor_id=competitor.id,
+        ).count() == 1
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_same_competitor_in_different_research_runs_is_allowed():
+    engine, db = make_db()
+    try:
+        first_run, competitor = create_research_context(db, "First")
+        second_run, _ = create_research_context(db, "Second")
+
+        first = create_execution(db, first_run, competitor)
+        second = CompetitorResearch(
+            research_run_id=second_run.id,
+            competitor_id=competitor.id,
+        )
+        db.add(second)
+        db.commit()
+
+        assert first.id != second.id
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_different_competitors_in_same_research_run_are_allowed():
+    engine, db = make_db()
+    try:
+        research_run, first_competitor = create_research_context(db)
+        second_competitor = Competitor(
+            research_run_id=research_run.id,
+            name="Second competitor",
+            domain="second.example",
+        )
+        db.add(second_competitor)
+        db.commit()
+
+        first = create_execution(db, research_run, first_competitor)
+        second = create_execution(db, research_run, second_competitor)
+
+        assert first.id != second.id
     finally:
         db.close()
         engine.dispose()
@@ -147,12 +216,11 @@ def test_collecting_transition_sets_started_at_only_when_started():
         engine.dispose()
 
 
-def test_explicit_source_targeting_does_not_use_latest_execution():
+def test_explicit_source_targeting_uses_the_logical_execution():
     engine, db = make_db()
     try:
         research_run, competitor = create_research_context(db)
         first = create_execution(db, research_run, competitor)
-        second = create_execution(db, research_run, competitor)
 
         source, created = research_service.register_competitor_source(
             db,
@@ -164,7 +232,7 @@ def test_explicit_source_targeting_does_not_use_latest_execution():
 
         assert created is True
         assert source.competitor_research_id == first.id
-        assert second.id != first.id
+        assert source.competitor_research_id == first.id
     finally:
         db.close()
         engine.dispose()
@@ -198,13 +266,11 @@ def test_structuring_completes_selected_execution():
         engine.dispose()
 
 
-def test_failure_affects_only_selected_execution():
+def test_failed_execution_is_reused_for_an_explicit_retry():
     engine, db = make_db()
     try:
         research_run, competitor = create_research_context(db)
         first = create_execution(db, research_run, competitor)
-        second = create_execution(db, research_run, competitor)
-
         failed = research_service.fail_competitor_research_execution(
             db,
             research_run,
@@ -214,23 +280,22 @@ def test_failure_affects_only_selected_execution():
 
         assert failed.status == "failed"
         assert failed.failure_reason == "Source collection failed"
-        assert db.get(type(second), second.id).status == "pending"
-        assert db.get(type(second), second.id).failure_reason is None
+        retried = create_execution(db, research_run, competitor)
+        assert retried.id == failed.id
+        assert retried.status == "pending"
+        assert retried.failure_reason is None
     finally:
         db.close()
         engine.dispose()
 
 
-def test_latest_execution_repository_methods_remain_latest():
+def test_repository_methods_return_the_logical_execution():
     engine, db = make_db()
     try:
         research_run, competitor = create_research_context(db)
         first = create_execution(db, research_run, competitor)
-        second = create_execution(db, research_run, competitor)
-
-        assert competitor_research_repository.get_by_competitor_id(db, competitor.id).id == second.id
-        assert competitor_research_repository.get_by_competitor_ids(db, [competitor.id])[0].id == second.id
-        assert first.id != second.id
+        assert competitor_research_repository.get_by_competitor_id(db, competitor.id).id == first.id
+        assert competitor_research_repository.get_by_competitor_ids(db, [competitor.id])[0].id == first.id
     finally:
         db.close()
         engine.dispose()

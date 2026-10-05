@@ -47,6 +47,7 @@ def valid_payload(scope="competitor"):
             {
                 "statement_id": "STATEMENT_001",
                 "statement_type": "observation",
+                "section": "pricing",
                 "text": "The listed starting price is $29 per month.",
                 "support_status": "supported",
                 "competitor_context_id": "COMPETITOR_001",
@@ -200,6 +201,32 @@ def test_provider_uses_configured_model_and_semantic_context_ids():
     assert "competitor_research_id" not in instruction
     assert "research_run_id" not in instruction
     assert call["config"].response_mime_type == "application/json"
+
+
+def test_instruction_requires_competitor_context_association_for_statements():
+    instruction = GeminiProvider._build_instruction(make_research_run_context())
+
+    required_rules = (
+        "every fact_context_id belongs to exactly one competitor_context_id",
+        "every evidence_context_id belongs to exactly one competitor_context_id",
+        "every referenced fact_context_id and evidence_context_id must belong to competitor X",
+        "must never reference facts or evidence belonging to different competitors",
+        "use the comparisons array instead",
+        "comparisons are the only place where cross-competitor information may be combined",
+        "Never infer competitor ownership from fact text, subject, domain, or ordering",
+        "Before returning JSON, internally verify",
+        "omit that reference rather than guessing",
+        "VALID: statement competitor_context_id = COMPETITOR_001",
+        "INVALID: statement competitor_context_id = COMPETITOR_001",
+        "FACT_003 belongs to COMPETITOR_002",
+        "For cross-competitor conclusions, use the comparisons array",
+    )
+
+    for rule in required_rules:
+        assert rule in instruction
+
+    assert "Classify every statement into exactly one report section" in instruction
+    assert "Do not invent facts, evidence, sources" in instruction
 
 
 def test_response_config_uses_wire_schema_without_additional_properties():

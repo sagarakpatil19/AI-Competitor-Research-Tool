@@ -41,6 +41,17 @@ def test_validate_destination_blocks_unsafe_ipv4_and_ipv6(url):
     assert error.value.category == "unsafe_destination"
 
 
+def test_validate_destination_allows_public_ipv4_through_dns64():
+    validate_destination("https://[64:ff9b::12a1:e567]/", resolve_hostname=False)
+
+
+def test_validate_destination_blocks_private_ipv4_through_dns64():
+    with pytest.raises(RetrievalError) as error:
+        validate_destination("https://[64:ff9b::a00:1]/", resolve_hostname=False)
+
+    assert error.value.category == "unsafe_destination"
+
+
 def test_unsafe_destination_is_rejected_before_httpx_request(monkeypatch):
     calls = 0
 

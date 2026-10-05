@@ -4,10 +4,13 @@ import unicodedata
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.company_research import CompanyResearch
 from app.models.competitor import Competitor
+from app.models.competitor_discovery_candidate import CompetitorDiscoveryCandidate
 from app.models.competitor_evidence import CompetitorEvidence
 from app.models.competitor_research import CompetitorResearch, CompetitorResearchStatus
 from app.models.competitor_source import CompetitorSource
@@ -25,6 +28,7 @@ from app.repositories import competitor_research as competitor_research_reposito
 from app.repositories import competitor_evidence as competitor_evidence_repository
 from app.repositories import competitor_sources as competitor_source_repository
 from app.repositories import research_runs as research_run_repository
+from app.services.competitor_research_structuring import structure_competitor_research
 
 
 DOMAIN_PATTERN = re.compile(
@@ -191,7 +195,40 @@ def research_competitors(
 
     results: list[CompetitorResearch] = []
     for competitor_id in unique_ids:
-        results.append(create_competitor_research_execution(db, research_run, competitor_id))
+        existing = competitor_research_repository.get_by_research_run_and_competitor_id(
+            db,
+            research_run.id,
+            competitor_id,
+        )
+        execution = create_competitor_research_execution(db, research_run, competitor_id)
+        if existing is not None and existing.status != CompetitorResearchStatus.FAILED.value:
+            results.append(execution)
+            continue
+        candidates = db.scalars(
+            select(CompetitorDiscoveryCandidate).where(
+                CompetitorDiscoveryCandidate.research_run_id == research_run.id,
+                CompetitorDiscoveryCandidate.competitor_id == competitor_id,
+                CompetitorDiscoveryCandidate.validation_status == "promoted",
+            )
+        ).all()
+        has_registered_source = False
+        for candidate in candidates:
+            for candidate_source in candidate.sources:
+                _, created = register_competitor_source(
+                    db,
+                    research_run,
+                    competitor_id,
+                    {
+                        "source_url": candidate_source.canonical_url,
+                        "discovery_method": candidate.discovery_method,
+                        "source_type": "discovery",
+                    },
+                    competitor_research_id=execution.id,
+                )
+                has_registered_source = has_registered_source or created
+        if not has_registered_source:
+            structure_competitor_research(db, research_run, execution.id)
+        results.append(execution)
     return results
 
 
@@ -253,14 +290,37 @@ def create_competitor_research_execution(
     if competitor.research_run_id != research_run.id:
         raise ValueError("Competitor must belong to the research run")
 
-    return competitor_research_repository.create_competitor_research(
+    existing = competitor_research_repository.get_by_research_run_and_competitor_id(
         db,
-        CompetitorResearch(
-            competitor_id=competitor.id,
-            research_run_id=research_run.id,
-            status=CompetitorResearchStatus.PENDING.value,
-        ),
+        research_run.id,
+        competitor.id,
     )
+    if existing is not None:
+        if existing.status == CompetitorResearchStatus.FAILED.value:
+            existing.status = CompetitorResearchStatus.PENDING.value
+            existing.failure_reason = None
+            existing.started_at = None
+            existing.completed_at = None
+            return competitor_research_repository.save_competitor_research(db, existing)
+        return existing
+
+    execution = CompetitorResearch(
+        competitor_id=competitor.id,
+        research_run_id=research_run.id,
+        status=CompetitorResearchStatus.PENDING.value,
+    )
+    try:
+        return competitor_research_repository.create_competitor_research(db, execution)
+    except IntegrityError:
+        db.rollback()
+        existing = competitor_research_repository.get_by_research_run_and_competitor_id(
+            db,
+            research_run.id,
+            competitor.id,
+        )
+        if existing is None:
+            raise
+        return existing
 
 
 def start_competitor_research_collection(
@@ -573,7 +633,8 @@ def collect_competitor_source(
         competitor_research_id,
     )
 
-    start_competitor_research_collection(db, research_run, competitor_research.id)
+    if competitor_research.status != CompetitorResearchStatus.COMPLETED.value:
+        start_competitor_research_collection(db, research_run, competitor_research.id)
 
     source.status = "fetching"
     source.attempt_count += 1
@@ -634,7 +695,12 @@ def collect_competitor_source(
         evidence.processed_at = None
         evidence = competitor_evidence_repository.save_evidence(db, evidence)
 
-    return source, process_competitor_evidence(db, research_run, competitor_id, evidence.id)
+    processed_evidence = process_competitor_evidence(db, research_run, competitor_id, evidence.id)
+    sources = competitor_source_repository.get_by_competitor_research_id(db, competitor_research.id)
+    if sources and all(item.status == "collected" for item in sources):
+        structure_competitor_research(db, research_run, competitor_research.id)
+
+    return source, processed_evidence
 
 
 def get_source_collection_target(

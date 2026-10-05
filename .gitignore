@@ -30,3 +30,10 @@ out/
 !.vscode/extensions.json
 .DS_Store
 Thumbs.db
+# =========================
+# Local runtime / backup artifacts
+# =========================
+*.log
+*.bak
+backend.zip
+routes.json

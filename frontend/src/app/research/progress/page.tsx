@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ResearchStageList } from "@/components/research/ResearchStageList";
 import {
   createReport,
@@ -17,7 +17,7 @@ import {
   submitAIAnalysis,
   understandCompany,
 } from "@/lib/api";
-import type { ResearchStage, ResearchStatus, ResearchStageStatus } from "@/types/research";
+import type { ResearchStage, ResearchStatus } from "@/types/research";
 
 const RESEARCH_STAGE_DEFINITIONS = [
   {
@@ -65,58 +65,46 @@ function stageStatusForApiStatus(apiStatus: string): ResearchStage[] {
     return preserveManualEvidenceStage(RESEARCH_STAGE_DEFINITIONS.map((stage) => ({ ...stage, status: "completed" })));
   }
 
-  if (normalized === "failed") {
+  if (normalized === "researching") {
     return preserveManualEvidenceStage(RESEARCH_STAGE_DEFINITIONS.map((stage, index) => ({
       ...stage,
-      status: index === RESEARCH_STAGE_DEFINITIONS.length - 1 ? "failed" : index < RESEARCH_STAGE_DEFINITIONS.length - 1 ? "completed" : "pending",
+      status: index < 2 ? "completed" : index === 2 ? "running" : "pending",
     })));
   }
 
-  if (normalized === "running" || normalized === "retrying" || normalized === "researching" || normalized === "analyzing") {
+  if (normalized === "analyzing") {
     return preserveManualEvidenceStage(RESEARCH_STAGE_DEFINITIONS.map((stage, index) => ({
       ...stage,
-      status: index === 0 ? "completed" : index === 1 ? "running" : "pending",
+      status: index < 3 ? "completed" : index === 4 ? "running" : "pending",
     })));
   }
 
-  if (normalized === "resolving") {
+  if (normalized === "generating") {
+    return preserveManualEvidenceStage(RESEARCH_STAGE_DEFINITIONS.map((stage, index) => ({
+      ...stage,
+      status: index === 4 ? "running" : index < 4 ? "completed" : "pending",
+    })));
+  }
+
+  if (normalized === "discovering" || normalized === "validating") {
+    return preserveManualEvidenceStage(RESEARCH_STAGE_DEFINITIONS.map((stage, index) => ({ ...stage, status: index === 0 ? "completed" : index === 1 ? "running" : "pending" })));
+  }
+
+  if (normalized === "resolving" || normalized === "understanding") {
     return preserveManualEvidenceStage(RESEARCH_STAGE_DEFINITIONS.map((stage, index) => ({ ...stage, status: index === 0 ? "running" : "pending" })));
   }
 
-  if (normalized === "discovering") {
-    return preserveManualEvidenceStage(RESEARCH_STAGE_DEFINITIONS.map((stage, index) => ({ ...stage, status: index === 0 ? "completed" : index === 1 ? "running" : "pending" })));
+  if (normalized === "failed") {
+    return RESEARCH_STAGE_DEFINITIONS.map((stage, index) => ({
+      ...stage,
+      status: index === 0 ? "failed" : "pending",
+    }));
   }
 
   return preserveManualEvidenceStage(RESEARCH_STAGE_DEFINITIONS.map((stage, index) => ({
     ...stage,
-    status: index === 0 ? "running" : "pending",
+    status: index === 0 ? "pending" : "pending",
   })));
-}
-
-function normalizeApiStatus(apiStatus: string | undefined): ResearchStatus {
-  const normalized = (apiStatus ?? "queued").toLowerCase();
-
-  if (normalized === "completed") {
-    return "completed";
-  }
-
-  if (normalized === "failed") {
-    return "failed";
-  }
-
-  if (normalized === "running" || normalized === "retrying") {
-    return "running";
-  }
-
-  if (normalized === "queued" || normalized === "submitted") {
-    return "queued";
-  }
-
-  if (["resolving", "discovering", "validating", "researching", "analyzing"].includes(normalized)) {
-    return "running";
-  }
-
-  return "partial";
 }
 
 function ResearchProgressContent() {
@@ -127,16 +115,26 @@ function ResearchProgressContent() {
   const [stages, setStages] = useState<ResearchStage[]>(createInitialStages);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(Boolean(researchId));
+  const workflowStatusRef = useRef(new Map<string, "running" | "completed">());
+  const mountedRef = useRef(false);
 
   useEffect(() => {
     if (!researchId) {
-      setIsLoading(false);
-      setOverallState("queued");
-      setStages(createInitialStages());
+      mountedRef.current = true;
+      return () => {
+        mountedRef.current = false;
+      };
+    }
+
+    mountedRef.current = true;
+
+    if (workflowStatusRef.current.has(researchId)) {
       return;
     }
 
-    let isMounted = true;
+    workflowStatusRef.current.set(researchId, "running");
+
+    let workflowCompleted = false;
 
     const loadResearchState = async () => {
       setIsLoading(true);
@@ -144,14 +142,17 @@ function ResearchProgressContent() {
 
       try {
         let run = await getResearchRun(researchId);
+        setStages(stageStatusForApiStatus(run.status));
 
         if (run.status === "submitted") {
+          setStages(stageStatusForApiStatus("resolving"));
           run = await resolveResearchRun(researchId);
         }
 
+        setStages(stageStatusForApiStatus("understanding"));
         await understandCompany(researchId);
-        setStages(stageStatusForApiStatus("resolving"));
 
+        setStages(stageStatusForApiStatus("discovering"));
         const discoveryOperation = await discoverCompetitors(researchId);
         const discoveryResult = await pollBackgroundOperation(discoveryOperation.status_url, 120000, 2000);
         const competitors = mapBackendCompetitors(discoveryResult.result ?? []);
@@ -161,6 +162,7 @@ function ResearchProgressContent() {
           throw new Error("The backend completed competitor discovery without returning valid competitor IDs.");
         }
 
+        setStages(stageStatusForApiStatus("researching"));
         const researchOperation = await researchCompetitors(researchId, competitorIds);
         const researchResult = await pollBackgroundOperation(researchOperation.status_url, 120000, 2000);
         const researchItems = ((researchResult.result ?? {}) as { competitor_research?: Array<{ id?: number }> }).competitor_research ?? [];
@@ -170,6 +172,7 @@ function ResearchProgressContent() {
           throw new Error("The backend completed competitor research without returning research record IDs.");
         }
 
+        setStages(stageStatusForApiStatus("analyzing"));
         const analysisOperation = await submitAIAnalysis(researchId, {
           scope: "research_run",
           competitor_research_ids: competitorResearchIds,
@@ -181,6 +184,7 @@ function ResearchProgressContent() {
           throw new Error("The completed AI analysis did not return a valid analysis ID for report generation.");
         }
 
+        setStages(stageStatusForApiStatus("generating"));
         const reports = await listReports(researchId);
         const currentReport = reports.find((report) => report.analysis_id === analysisId);
 
@@ -188,25 +192,36 @@ function ResearchProgressContent() {
           await createReport(researchId, analysisId);
         }
 
-        run = await getResearchRun(researchId);
-        const resolvedStatus = run.status;
+        workflowCompleted = true;
 
-        if (!isMounted) {
+        if (!mountedRef.current) {
           return;
         }
 
-        setOverallState(normalizeApiStatus(resolvedStatus));
-        setStages(stageStatusForApiStatus(resolvedStatus));
+        setOverallState("completed");
+        setStages(stageStatusForApiStatus("completed"));
       } catch (error) {
-        if (!isMounted) {
+        if (!mountedRef.current) {
           return;
         }
 
         setOverallState("failed");
-        setStages(stageStatusForApiStatus("failed"));
+        setStages((currentStages) => {
+          const hasActiveStage = currentStages.some((stage) => stage.status === "running");
+          return currentStages.map((stage, index) => ({
+            ...stage,
+            status: stage.status === "running" || (!hasActiveStage && index === 0) ? "failed" : stage.status,
+          }));
+        });
         setErrorMessage(getApiErrorMessage(error, "Unable to load the current research state from the backend."));
       } finally {
-        if (isMounted) {
+        if (workflowCompleted) {
+          workflowStatusRef.current.set(researchId, "completed");
+        } else {
+          workflowStatusRef.current.delete(researchId);
+        }
+
+        if (mountedRef.current) {
           setIsLoading(false);
         }
       }
@@ -215,16 +230,16 @@ function ResearchProgressContent() {
     void loadResearchState();
 
     return () => {
-      isMounted = false;
+      mountedRef.current = false;
     };
   }, [researchId]);
 
   const currentStage =
-    overallState === "completed"
+    stages.find((stage) => stage.status === "running") ??
+    stages.find((stage) => stage.status === "failed") ??
+    (overallState === "completed"
       ? RESEARCH_STAGE_DEFINITIONS[RESEARCH_STAGE_DEFINITIONS.length - 1]
-      : overallState === "failed"
-        ? RESEARCH_STAGE_DEFINITIONS[RESEARCH_STAGE_DEFINITIONS.length - 1]
-        : RESEARCH_STAGE_DEFINITIONS[0];
+      : stages.find((stage) => stage.status === "pending") ?? RESEARCH_STAGE_DEFINITIONS[0]);
 
   const stateMessage = useMemo(() => {
     if (!researchId) {

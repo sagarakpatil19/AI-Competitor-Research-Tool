@@ -1,7 +1,7 @@
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ from app.repositories import competitor_research_sections as section_repository
 SECTIONS = tuple(section.value for section in CompetitorResearchSectionName)
 PROCESSING_PROCESSED = "processed"
 VALIDATION_VALID = "valid"
+MAX_FACT_SUBJECT_LENGTH = 500
 
 _PRICE_PATTERN = re.compile(
     r"(?P<symbol>[$\u20ac\u00a3])\s*(?P<amount>\d+(?:[.,]\d{1,2})?)"
@@ -124,6 +125,8 @@ def _extract_feature_facts(content: str) -> list[_FactCandidate]:
         if not re.match(r"supports?", match.group(0), re.IGNORECASE):
             continue
         for item in _split_items(match.group("items")):
+            if len(item) > MAX_FACT_SUBJECT_LENGTH:
+                continue
             facts.append(_FactCandidate(
                 "features", "feature", item, None, None, None, None, None,
                 _excerpt(content, match.start(), match.end()),
@@ -153,11 +156,16 @@ def _extract_pricing_facts(content: str) -> list[_FactCandidate]:
 
 
 def _extract_target_audience_facts(content: str) -> list[_FactCandidate]:
-    return [
-        _FactCandidate("target_audience", "audience", _clean(match.group("audience")), None, None, None, None, None,
-                       _excerpt(content, match.start(), match.end()))
-        for match in _FOR_PATTERN.finditer(content)
-    ]
+    facts: list[_FactCandidate] = []
+    for match in _FOR_PATTERN.finditer(content):
+        audience = _clean(match.group("audience"))
+        if len(audience) > MAX_FACT_SUBJECT_LENGTH:
+            continue
+        facts.append(_FactCandidate(
+            "target_audience", "audience", audience, None, None, None, None, None,
+            _excerpt(content, match.start(), match.end()),
+        ))
+    return facts
 
 
 def _extract_customer_feedback_facts(content: str, evidence: CompetitorEvidence) -> list[_FactCandidate]:
@@ -168,8 +176,12 @@ def _extract_customer_feedback_facts(content: str, evidence: CompetitorEvidence)
             _excerpt(content, match.start(), match.end()),
         ))
     for match in _REVIEW_COUNT_PATTERN.finditer(content):
+        try:
+            review_count = Decimal(match.group("count").replace(",", ""))
+        except InvalidOperation:
+            review_count = None
         facts.append(_FactCandidate(
-            "customer_feedback", "review_count", None, None, Decimal(match.group("count").replace(",", "")), None, "reviews", None,
+            "customer_feedback", "review_count", None, None, review_count, None, "reviews", None,
             _excerpt(content, match.start(), match.end()),
         ))
     for match in _RATING_PATTERN.finditer(content):

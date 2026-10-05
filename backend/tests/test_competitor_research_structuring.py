@@ -188,6 +188,29 @@ def test_product_and_feature_extraction_is_deterministic():
         engine.dispose()
 
 
+def test_navigation_sized_feature_match_is_ignored_without_truncation():
+    engine, db = make_db()
+    try:
+        research_run, _, execution = create_execution(db)
+        navigation_block = " ".join(["Navigation"] * 100)
+        add_evidence(
+            db,
+            execution.id,
+            f"Acme supports {navigation_block}. Acme supports SSO and audit logs.",
+        )
+
+        structure_competitor_research(db, research_run, execution.id)
+
+        features = db.scalars(
+            select(CompetitorResearchFact).where(CompetitorResearchFact.section == "features")
+        ).all()
+        assert {fact.subject for fact in features} == {"SSO", "audit logs"}
+        assert all(len(fact.subject or "") <= 500 for fact in features)
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_customer_feedback_does_not_classify_sentiment():
     engine, db = make_db()
     try:
@@ -227,6 +250,24 @@ def test_target_audience_and_customer_feedback_metadata_are_structured_without_s
             ("customer_feedback", "review_platform", "G2", None),
         }
         assert all(fact.fact_type not in {"sentiment", "satisfaction"} for fact in facts)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_malformed_review_count_is_stored_without_numeric_value():
+    engine, db = make_db()
+    try:
+        research_run, _, execution = create_execution(db)
+        add_evidence(db, execution.id, "The product has x, reviews.")
+
+        structure_competitor_research(db, research_run, execution.id)
+
+        fact = db.scalar(
+            select(CompetitorResearchFact).where(CompetitorResearchFact.fact_type == "review_count")
+        )
+        assert fact is not None
+        assert fact.value_numeric is None
     finally:
         db.close()
         engine.dispose()

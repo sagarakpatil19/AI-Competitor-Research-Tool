@@ -21,7 +21,7 @@ export function ReportCompetitorComparison({ comparison }: { comparison: ReportC
                 Target Company
               </th>
               {comparison[0]?.competitors.map((competitor) => (
-                <th key={competitor.name} className="pr-4 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--foreground-secondary)]">
+                <th key={competitor.id} className="pr-4 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--foreground-secondary)]">
                   {competitor.name}
                 </th>
               ))}
@@ -30,7 +30,7 @@ export function ReportCompetitorComparison({ comparison }: { comparison: ReportC
 
           <tbody>
             {comparison.map((row) => (
-              <tr key={row.category} className="align-top">
+              <tr key={row.id} className="align-top">
                 <td className="rounded-l-2xl border border-[var(--border)] bg-[var(--surface-subtle)] p-3 font-medium text-[var(--foreground)]">
                   {row.category}
                 </td>
@@ -38,7 +38,7 @@ export function ReportCompetitorComparison({ comparison }: { comparison: ReportC
                   {row.targetCompany}
                 </td>
                 {row.competitors.map((competitor) => (
-                  <td key={`${row.category}-${competitor.name}`} className="border border-[var(--border)] bg-[var(--surface)] p-3 leading-6 text-[var(--foreground)]">
+                  <td key={`${row.category}-${competitor.id}`} className="border border-[var(--border)] bg-[var(--surface)] p-3 leading-6 text-[var(--foreground)]">
                     {competitor.value}
                   </td>
                 ))}

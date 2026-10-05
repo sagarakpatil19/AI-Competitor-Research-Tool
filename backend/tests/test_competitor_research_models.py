@@ -40,18 +40,15 @@ def create_execution(db: Session, name: str = "Acme") -> tuple[ResearchRun, Comp
     return research_run, competitor, execution
 
 
-def test_multiple_historical_executions_can_belong_to_one_competitor(db: Session):
+def test_duplicate_logical_executions_are_rejected(db: Session):
     research_run, competitor, first = create_execution(db)
     second = CompetitorResearch(
         competitor_id=competitor.id,
         research_run_id=research_run.id,
     )
     db.add(second)
-    db.commit()
-
-    assert [execution.id for execution in competitor.research_executions] == [first.id, second.id]
-    assert first.research_run_id == research_run.id
-    assert second.research_run_id == research_run.id
+    with pytest.raises(IntegrityError):
+        db.commit()
 
 
 def test_fact_and_fact_evidence_preserve_execution_provenance(db: Session):
@@ -164,8 +161,15 @@ def test_sources_is_not_a_valid_fact_section(db: Session):
 
 def test_historical_execution_facts_are_not_overwritten(db: Session):
     research_run, competitor, first = create_execution(db)
+    second_competitor = Competitor(
+        research_run_id=research_run.id,
+        name="Second competitor",
+        domain="second.example",
+    )
+    db.add(second_competitor)
+    db.flush()
     second = CompetitorResearch(
-        competitor_id=competitor.id,
+        competitor_id=second_competitor.id,
         research_run_id=research_run.id,
     )
     db.add(second)

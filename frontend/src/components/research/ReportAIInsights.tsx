@@ -12,9 +12,9 @@ export function ReportAIInsights({ insights }: { insights: ReportInsight[] }) {
 
       <div className="mt-5 space-y-4">
         {insights.map((insight) => (
-          <div key={insight.title} className="rounded-2xl border border-[var(--border)] bg-[var(--surface-subtle)] p-4">
+          <div key={insight.id} className="rounded-2xl border border-[var(--border)] bg-[var(--surface-subtle)] p-4">
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--primary-blue)] sm:text-[11px]">
-              {insight.kind === "analysis" ? "AI analysis" : "Pattern note"}
+              {insight.kind === "analysis" ? `AI analysis · ${insight.supportStatus}` : "Pattern note"}
             </p>
             <p className="mt-2 text-lg font-medium text-[var(--foreground)]">{insight.title}</p>
             <p className="mt-2 text-sm leading-7 text-[var(--foreground-secondary)] sm:text-base">{insight.summary}</p>

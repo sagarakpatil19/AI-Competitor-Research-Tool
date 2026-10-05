@@ -12,6 +12,19 @@ def get_by_competitor_id(db: Session, competitor_id: int) -> CompetitorResearch 
     )
 
 
+def get_by_research_run_and_competitor_id(
+    db: Session,
+    research_run_id: int,
+    competitor_id: int,
+) -> CompetitorResearch | None:
+    return db.scalar(
+        select(CompetitorResearch).where(
+            CompetitorResearch.research_run_id == research_run_id,
+            CompetitorResearch.competitor_id == competitor_id,
+        )
+    )
+
+
 def get_by_competitor_ids(
     db: Session,
     competitor_ids: list[int],

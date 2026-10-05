@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.ai.contracts import AIComparisonResult, AIStatementResult, ProviderAnalysisResult
@@ -25,6 +26,7 @@ from app.models import (
 )
 from app.models.competitor_research_section import CompetitorResearchSection
 from app.services.ai_analysis import execute_ai_analysis
+from app.services import ai_analysis as ai_analysis_service
 
 
 @pytest.fixture()
@@ -37,6 +39,9 @@ def db():
 
 
 class FakeProvider:
+    provider_name = "fake-provider"
+    model_name = "fake-model"
+
     def analyze(self, context):
         return ProviderAnalysisResult(
             scope=context.scope,
@@ -46,6 +51,7 @@ class FakeProvider:
                 AIStatementResult(
                     statement_id="STATEMENT_001",
                     statement_type="observation",
+                    section="features",
                     text="Pricing differs across competitors.",
                     support_status="supported",
                     competitor_context_id=context.competitors[0].context_id,
@@ -72,8 +78,19 @@ class FakeProvider:
                         context.competitors[1].context_id: "compared",
                     },
                 )
-            ],
+            ] if len(context.competitors) > 1 else [],
         )
+
+
+class CountingProvider(FakeProvider):
+    def __init__(self, provider_name="fake-provider", model_name="fake-model"):
+        self.calls = 0
+        self.provider_name = provider_name
+        self.model_name = model_name
+
+    def analyze(self, context):
+        self.calls += 1
+        return super().analyze(context)
 
 
 def make_execution(db: Session, run: ResearchRun, name: str, domain: str, amount: Decimal):
@@ -151,6 +168,7 @@ def test_execute_ai_analysis_persists_provider_output(db: Session):
     assert len(analysis.input_evidence) == 2
     assert len(analysis.statements) == 1
     assert len(analysis.comparisons) == 1
+    assert analysis.statements[0].section == "features"
     assert analysis.statements[0].fact_links[0].fact_id in {first_fact.id, second_fact.id}
     assert analysis.comparisons[0].competitors[0].role in {"subject", "compared"}
 
@@ -164,6 +182,9 @@ def test_research_run_analysis_rejects_execution_from_another_research_run(db: S
     second_execution, _, _ = make_execution(db, second_run, "Beta", "beta.example", Decimal("49"))
 
     class RecordingProvider:
+        provider_name = "recording-provider"
+        model_name = "recording-model"
+
         def __init__(self):
             self.calls = 0
 
@@ -222,7 +243,7 @@ def test_persistence_failure_rolls_back_partial_analysis_output(db: Session, mon
     assert db.scalars(select(AIComparisonCompetitor)).all() == []
 
 
-def test_rerun_creates_new_analysis_without_overwriting_completed_result(db: Session):
+def test_rerun_reuses_completed_analysis(db: Session):
     run = ResearchRun(input_value="Acme")
     db.add(run)
     db.flush()
@@ -246,8 +267,8 @@ def test_rerun_creates_new_analysis_without_overwriting_completed_result(db: Ses
 
     assert first.status == "completed"
     assert second.status == "completed"
-    assert first.id != second.id
-    assert db.scalars(select(AIAnalysis).where(AIAnalysis.research_run_id == run.id)).all() == [first, second]
+    assert first.id == second.id
+    assert db.scalars(select(AIAnalysis).where(AIAnalysis.research_run_id == run.id)).all() == [first]
 
 
 def test_execute_ai_analysis_marks_failed_when_provider_raises(db: Session):
@@ -272,6 +293,9 @@ def test_execute_ai_analysis_marks_failed_when_provider_raises(db: Session):
     db.commit()
 
     class FailingProvider:
+        provider_name = "failing-provider"
+        model_name = "failing-model"
+
         def analyze(self, context):
             raise ProviderUnavailableError("Gemini is unavailable")
 
@@ -285,3 +309,263 @@ def test_execute_ai_analysis_marks_failed_when_provider_raises(db: Session):
 
     assert analysis.status == "failed"
     assert "Gemini is unavailable" in analysis.failure_reason
+    retry = execute_ai_analysis(
+        db,
+        run.id,
+        provider=FailingProvider(),
+        scope="competitor",
+        competitor_research_id=execution.id,
+    )
+    assert retry.status == "failed"
+    assert retry.id != analysis.id
+    assert retry.request_fingerprint == analysis.request_fingerprint
+
+
+def test_pending_and_running_analysis_are_reused(db: Session):
+    run = ResearchRun(input_value="Acme")
+    db.add(run)
+    db.flush()
+    execution, _, _ = make_execution(db, run, "Alpha", "alpha.example", Decimal("29"))
+    provider = CountingProvider()
+
+    first = execute_ai_analysis(
+        db,
+        run.id,
+        provider=provider,
+        scope="competitor",
+        competitor_research_id=execution.id,
+    )
+    first.status = "pending"
+    db.commit()
+    pending = execute_ai_analysis(
+        db,
+        run.id,
+        provider=provider,
+        scope="competitor",
+        competitor_research_id=execution.id,
+    )
+    assert pending.id == first.id
+
+    first.status = "running"
+    db.commit()
+    running = execute_ai_analysis(
+        db,
+        run.id,
+        provider=provider,
+        scope="competitor",
+        competitor_research_id=execution.id,
+    )
+    assert running.id == first.id
+    assert provider.calls == 1
+
+
+def test_reordered_ids_reuse_and_changed_identity_inputs_do_not(db: Session):
+    run = ResearchRun(input_value="Acme")
+    db.add(run)
+    db.flush()
+    first_execution, _, _ = make_execution(db, run, "Alpha", "alpha.example", Decimal("29"))
+    second_execution, _, _ = make_execution(db, run, "Beta", "beta.example", Decimal("49"))
+
+    first = execute_ai_analysis(
+        db,
+        run.id,
+        provider=CountingProvider(),
+        scope="research_run",
+        competitor_research_ids=[first_execution.id, second_execution.id],
+    )
+    reordered = execute_ai_analysis(
+        db,
+        run.id,
+        provider=CountingProvider(),
+        scope="research_run",
+        competitor_research_ids=[second_execution.id, first_execution.id],
+    )
+    changed_ids = execute_ai_analysis(
+        db,
+        run.id,
+        provider=CountingProvider(),
+        scope="competitor",
+        competitor_research_id=first_execution.id,
+    )
+    changed_prompt = execute_ai_analysis(
+        db,
+        run.id,
+        provider=CountingProvider(),
+        scope="research_run",
+        competitor_research_ids=[first_execution.id, second_execution.id],
+        prompt_version="prompt-v2",
+    )
+    changed_contract = execute_ai_analysis(
+        db,
+        run.id,
+        provider=CountingProvider(),
+        scope="research_run",
+        competitor_research_ids=[first_execution.id, second_execution.id],
+        contract_version="contract-v2",
+    )
+    changed_provider = execute_ai_analysis(
+        db,
+        run.id,
+        provider=CountingProvider(provider_name="other-provider"),
+        scope="research_run",
+        competitor_research_ids=[first_execution.id, second_execution.id],
+    )
+    changed_model = execute_ai_analysis(
+        db,
+        run.id,
+        provider=CountingProvider(model_name="other-model"),
+        scope="research_run",
+        competitor_research_ids=[first_execution.id, second_execution.id],
+    )
+
+    assert reordered.id == first.id
+    assert changed_ids.id != first.id
+    assert changed_prompt.id != first.id
+    assert changed_contract.id != first.id
+    assert changed_provider.id != first.id
+    assert changed_model.id != first.id
+
+
+def test_changed_snapshot_creates_new_fingerprint(db: Session):
+    run = ResearchRun(input_value="Acme")
+    db.add(run)
+    db.flush()
+    execution, fact, _ = make_execution(db, run, "Alpha", "alpha.example", Decimal("29"))
+    first = execute_ai_analysis(
+        db,
+        run.id,
+        provider=CountingProvider(),
+        scope="competitor",
+        competitor_research_id=execution.id,
+    )
+    fact.value_numeric = Decimal("39")
+    db.commit()
+    second = execute_ai_analysis(
+        db,
+        run.id,
+        provider=CountingProvider(),
+        scope="competitor",
+        competitor_research_id=execution.id,
+    )
+    assert second.id != first.id
+    assert second.request_fingerprint != first.request_fingerprint
+
+
+def test_identical_request_does_not_call_provider_twice(db: Session):
+    run = ResearchRun(input_value="Acme")
+    db.add(run)
+    db.flush()
+    execution, _, _ = make_execution(db, run, "Alpha", "alpha.example", Decimal("29"))
+    provider = CountingProvider()
+    first = execute_ai_analysis(
+        db, run.id, provider=provider, scope="competitor", competitor_research_id=execution.id
+    )
+    second = execute_ai_analysis(
+        db, run.id, provider=provider, scope="competitor", competitor_research_id=execution.id
+    )
+    assert second.id == first.id
+    assert provider.calls == 1
+
+
+def test_unique_insert_race_reuses_winner_and_preserves_outer_work(db: Session, monkeypatch):
+    run = ResearchRun(input_value="Acme")
+    db.add(run)
+    db.flush()
+    execution, _, _ = make_execution(db, run, "Alpha", "alpha.example", Decimal("29"))
+    winner = execute_ai_analysis(
+        db,
+        run.id,
+        provider=CountingProvider(),
+        scope="competitor",
+        competitor_research_id=execution.id,
+    )
+    unrelated = ResearchRun(input_value="Unrelated work")
+    db.add(unrelated)
+    db.flush()
+    research_run_id = run.id
+    unrelated_id = unrelated.id
+
+    lookup_results = iter((None, winner))
+    monkeypatch.setattr(
+        ai_analysis_service.ai_analysis_repository,
+        "get_reusable_by_request_fingerprint",
+        lambda *args, **kwargs: next(lookup_results),
+    )
+    original_flush = db.flush
+
+    def raise_unique(*args, **kwargs):
+        if any(
+            isinstance(item, AIAnalysis) and item.request_fingerprint is not None
+            for item in db.new
+        ):
+            raise IntegrityError("duplicate fingerprint", {}, Exception("duplicate"))
+        return original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(db, "flush", raise_unique)
+    reused = execute_ai_analysis(
+        db,
+        research_run_id,
+        provider=CountingProvider(),
+        scope="competitor",
+        competitor_research_id=execution.id,
+    )
+    assert reused.id == winner.id
+
+    monkeypatch.setattr(db, "flush", original_flush)
+    db.commit()
+    assert db.get(ResearchRun, unrelated_id) is not None
+
+
+def test_unrelated_integrity_error_is_reraised(db: Session, monkeypatch):
+    run = ResearchRun(input_value="Acme")
+    db.add(run)
+    db.flush()
+    execution, _, _ = make_execution(db, run, "Alpha", "alpha.example", Decimal("29"))
+    research_run_id = run.id
+
+    monkeypatch.setattr(
+        ai_analysis_service.ai_analysis_repository,
+        "get_reusable_by_request_fingerprint",
+        lambda *args, **kwargs: None,
+    )
+
+    def raise_integrity(*args, **kwargs):
+        if any(
+            isinstance(item, AIAnalysis) and item.request_fingerprint is not None
+            for item in db.new
+        ):
+            raise IntegrityError("unrelated constraint", {}, Exception("unrelated"))
+        return original_flush(*args, **kwargs)
+
+    original_flush = db.flush
+    monkeypatch.setattr(db, "flush", raise_integrity)
+    with pytest.raises(IntegrityError, match="unrelated constraint"):
+        execute_ai_analysis(
+            db,
+            research_run_id,
+            provider=CountingProvider(),
+            scope="competitor",
+            competitor_research_id=execution.id,
+        )
+
+
+def test_provider_without_model_identity_fails_before_persistence(db: Session):
+    class UnidentifiedProvider:
+        provider_name = "unidentified-provider"
+
+        def analyze(self, context):
+            raise AssertionError("provider must not be called")
+
+    run = ResearchRun(input_value="Acme")
+    db.add(run)
+    db.flush()
+    execution, _, _ = make_execution(db, run, "Alpha", "alpha.example", Decimal("29"))
+
+    with pytest.raises(ValueError, match="configured model identity"):
+        execute_ai_analysis(
+            db,
+            run.id,
+            provider=UnidentifiedProvider(),
+            scope="competitor",
+            competitor_research_id=execution.id,
+        )

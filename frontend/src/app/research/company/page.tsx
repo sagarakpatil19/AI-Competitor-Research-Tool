@@ -143,6 +143,9 @@ function CompanyContent() {
                 <p className="mt-4 max-w-xl text-base leading-7 text-[#52627A]">{company.overview}</p>
 
                 <div className="mt-6 flex flex-wrap gap-3">
+                  {company.domain ? (
+                    <span className="rounded-full border border-[#DCE6F5] bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#52627A]">{company.domain}</span>
+                  ) : null}
                   <span className="rounded-full border border-[#DCE6F5] bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#52627A]">{company.industry}</span>
                   <span className="rounded-full border border-[#EAF2FF] bg-[#F3F7FF] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#326FEA]">Research foundation</span>
                 </div>

@@ -7,6 +7,15 @@ from app.ai.errors import ProviderInvalidOutputError
 
 
 StatementType = Literal["observation", "feedback_insight", "conflict", "evidence_gap"]
+StatementSection = Literal[
+    "company_overview",
+    "products",
+    "features",
+    "pricing",
+    "target_audience",
+    "customer_feedback",
+    "key_findings",
+]
 SupportStatus = Literal["supported", "partially_supported", "conflicting", "insufficient_evidence"]
 FactReferenceRole = Literal["supports", "contradicts", "context"]
 EvidenceReferenceRole = Literal["supports", "contradicts", "quotes", "context"]
@@ -16,6 +25,7 @@ ComparisonRole = Literal["subject", "baseline", "compared"]
 class AIStatementResult(BaseModel):
     statement_id: str = Field(min_length=1)
     statement_type: StatementType
+    section: StatementSection
     text: str = Field(min_length=1)
     support_status: SupportStatus
     competitor_context_id: str | None = None

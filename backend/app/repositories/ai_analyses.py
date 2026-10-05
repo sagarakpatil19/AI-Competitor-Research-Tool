@@ -8,6 +8,20 @@ def get_analysis(db: Session, analysis_id: int) -> AIAnalysis | None:
     return db.get(AIAnalysis, analysis_id)
 
 
+def get_reusable_by_request_fingerprint(
+    db: Session,
+    request_fingerprint: str,
+) -> AIAnalysis | None:
+    return db.scalar(
+        select(AIAnalysis)
+        .where(
+            AIAnalysis.request_fingerprint == request_fingerprint,
+            AIAnalysis.status.in_(("pending", "running", "completed")),
+        )
+        .order_by(AIAnalysis.id.asc())
+    )
+
+
 def list_by_research_run_id(db: Session, research_run_id: int) -> list[AIAnalysis]:
     return list(
         db.scalars(

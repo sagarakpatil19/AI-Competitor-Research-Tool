@@ -8,6 +8,7 @@ from app.ai.contracts import (
     EvidenceReferenceRole,
     FactReferenceRole,
     ProviderAnalysisResult,
+    StatementSection,
     StatementType,
     SupportStatus,
     validate_provider_result,
@@ -40,6 +41,7 @@ class _CompetitorRoleAssignment(BaseModel):
 class _AIStatementWireResult(BaseModel):
     statement_id: str = Field(min_length=1)
     statement_type: StatementType
+    section: StatementSection
     text: str = Field(min_length=1)
     support_status: SupportStatus
     competitor_context_id: str | None = None
@@ -186,6 +188,26 @@ class GeminiProvider:
             "Do not invent facts, evidence, sources, prices, competitors, or unsupported conclusions. "
             "Missing evidence is not negative evidence. Preserve conflicting facts without resolving them. "
             "Use evidence_gap when evidence is insufficient. Distinguish observation from feedback_insight. "
+            "Competitor-context association rules are mandatory: every fact_context_id belongs to exactly one competitor_context_id, and every evidence_context_id belongs to exactly one competitor_context_id. "
+            "If a statement has competitor_context_id = X, every referenced fact_context_id and evidence_context_id must belong to competitor X. "
+            "A statement must never reference facts or evidence belonging to different competitors. "
+            "If facts or evidence from multiple competitors are needed, do not create a normal statement; use the comparisons array instead. "
+            "For research_run scope, comparisons are the only place where cross-competitor information may be combined. "
+            "Never infer competitor ownership from fact text, subject, domain, or ordering; use only the explicit competitor_context_id fields. "
+            "Before returning JSON, internally verify that every statement competitor_context_id matches all of its referenced facts and evidence. "
+            "If a fact or evidence relationship is ambiguous, omit that reference rather than guessing. "
+            "Example: VALID: statement competitor_context_id = COMPETITOR_001 with fact_context_ids = [FACT_001, FACT_002], where FACT_001 and FACT_002 both have competitor_context_id = COMPETITOR_001. "
+            "INVALID: statement competitor_context_id = COMPETITOR_001 with fact_context_ids = [FACT_001, FACT_003], where FACT_003 belongs to COMPETITOR_002. "
+            "For cross-competitor conclusions, use the comparisons array with multiple competitor_context_ids instead of a statement. "
+            "Classify every statement into exactly one report section: company_overview for facts about what the company is, its business, positioning, or general description; "
+            "products for products, services, offerings, packages, or product lines; "
+            "features for concrete capabilities, functionality, integrations, technical or service capabilities; "
+            "pricing for prices, plans, pricing models, free tiers, paid tiers, billing, or pricing availability; "
+            "target_audience for customer segments, intended users, industries, business sizes, or target market; "
+            "customer_feedback for reviews, ratings, recurring customer praise or complaints, satisfaction patterns, or feedback-derived insights; "
+            "key_findings for important supported cross-cutting findings that do not naturally belong elsewhere. "
+            "Assign exactly one section to every statement. Do not use comparisons as a statement section; keep comparisons in the comparisons array. "
+            "Choose the section from the statement subject matter, not statement_type alone. "
             "Produce comparisons only when scope is research_run. Cite only the supplied semantic context IDs. "
             "Return only the requested structured JSON result.\n\n"
             f"Analysis context:\n{serialized_context}"

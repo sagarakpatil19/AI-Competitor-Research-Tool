@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.integrations.competitor_discovery_base import (
@@ -17,6 +18,7 @@ from app.integrations.competitor_discovery_base import (
 )
 from app.integrations.tavily_competitor_discovery import TavilyCompetitorDiscoveryProvider
 from app.models.company_research import CompanyResearch
+from app.models.competitor import Competitor
 from app.models.competitor_discovery_candidate import CompetitorDiscoveryCandidate
 from app.models.competitor_discovery_candidate_source import CompetitorDiscoveryCandidateSource
 from app.models.competitor_discovery_run import CompetitorDiscoveryRun
@@ -122,24 +124,69 @@ def _add_candidate_rows(
 ) -> None:
     candidate_name = processed.candidate_name or processed.domain or "Unknown candidate"
     normalized_name = processed.normalized_name or candidate_name.casefold()
-    candidate = CompetitorDiscoveryCandidate(
-        discovery_run_id=discovery_run.id,
-        research_run_id=research_run_id,
-        candidate_name=candidate_name,
-        normalized_name=normalized_name,
-        domain=processed.domain,
-        canonical_url=processed.canonical_url,
-        discovery_method=processed.discovery_method,
-        provider_name=processed.provider_name,
-        provider_candidate_id=processed.provider_candidate_id,
-        provider_rank=processed.provider_rank,
-        discovery_status=processed.discovery_status,
-        validation_status=processed.validation_status,
-        validation_reason=processed.validation_reason,
-    )
-    db.add(candidate)
-    db.flush()
+    candidate = None
+    if processed.domain:
+        candidate = db.scalar(
+            select(CompetitorDiscoveryCandidate).where(
+                CompetitorDiscoveryCandidate.research_run_id == research_run_id,
+                CompetitorDiscoveryCandidate.domain == processed.domain,
+            )
+        )
+
+    if candidate is None:
+        candidate = CompetitorDiscoveryCandidate(
+            discovery_run_id=discovery_run.id,
+            research_run_id=research_run_id,
+            candidate_name=candidate_name,
+            normalized_name=normalized_name,
+            domain=processed.domain,
+            canonical_url=processed.canonical_url,
+            discovery_method=processed.discovery_method,
+            provider_name=processed.provider_name,
+            provider_candidate_id=processed.provider_candidate_id,
+            provider_rank=processed.provider_rank,
+            discovery_status=processed.discovery_status,
+            validation_status=processed.validation_status,
+            validation_reason=processed.validation_reason,
+        )
+        db.add(candidate)
+        db.flush()
+    else:
+        was_promoted = candidate.competitor_id is not None or candidate.validation_status == "promoted"
+        candidate.candidate_name = candidate_name
+        candidate.normalized_name = normalized_name
+        candidate.canonical_url = processed.canonical_url
+        candidate.discovery_method = processed.discovery_method
+        candidate.provider_name = processed.provider_name
+        candidate.provider_candidate_id = processed.provider_candidate_id
+        candidate.provider_rank = processed.provider_rank
+        candidate.discovery_status = processed.discovery_status
+        candidate.validation_status = "promoted" if was_promoted else processed.validation_status
+        candidate.validation_reason = processed.validation_reason
+
+    if processed.validation_status == VALIDATION_VALID and processed.domain:
+        competitor = db.scalar(
+            select(Competitor).where(
+                Competitor.research_run_id == research_run_id,
+                Competitor.domain == processed.domain,
+            )
+        )
+        if competitor is None:
+            competitor = Competitor(
+                research_run_id=research_run_id,
+                name=candidate_name,
+                domain=processed.domain,
+            )
+            db.add(competitor)
+            db.flush()
+
+        candidate.competitor_id = competitor.id
+        candidate.validation_status = "promoted"
+
+    existing_source_urls = {source.canonical_url for source in candidate.sources}
     for provenance in processed.supporting_sources:
+        if provenance.supporting_result_url in existing_source_urls:
+            continue
         db.add(
             CompetitorDiscoveryCandidateSource(
                 candidate_id=candidate.id,
@@ -152,6 +199,7 @@ def _add_candidate_rows(
                 provider_rank=provenance.provider_rank,
             )
         )
+        existing_source_urls.add(provenance.supporting_result_url)
 
 
 def _provider_failure_category(error: DiscoveryProviderError) -> str:

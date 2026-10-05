@@ -153,6 +153,7 @@ def valid_result(scope: str = "competitor") -> ProviderAnalysisResult:
             AIStatementResult(
                 statement_id="STATEMENT_001",
                 statement_type="observation",
+                section="pricing",
                 text="The listed starting price is $29 per month.",
                 support_status="supported",
                 competitor_context_id="COMPETITOR_001",
@@ -187,6 +188,7 @@ def test_statement_cannot_mix_fact_and_evidence_from_different_competitors():
     statement = AIStatementResult(
         statement_id="STATEMENT_001",
         statement_type="observation",
+        section="pricing",
         text="Mixed competitor references.",
         support_status="supported",
         fact_context_ids=["FACT_001"],
@@ -284,6 +286,7 @@ def test_duplicate_references_are_rejected():
         statement = AIStatementResult(
             statement_id="STATEMENT_001",
             statement_type="observation",
+            section="pricing",
             text="Duplicate reference.",
             support_status="supported",
             competitor_context_id="COMPETITOR_001",
@@ -375,6 +378,7 @@ def test_unknown_reference_types_are_rejected():
         statement = AIStatementResult(
             statement_id="STATEMENT_001",
             statement_type="observation",
+            section="pricing",
             text="Unsupported reference.",
             support_status="supported",
             competitor_context_id="COMPETITOR_001",
@@ -402,7 +406,23 @@ def test_invalid_statement_values_are_rejected_by_contract():
     with pytest.raises(ValidationError):
         AIStatementResult(
             statement_id="STATEMENT_001",
+            statement_type="observation",
+            text="Missing section",
+            support_status="supported",
+        )
+    with pytest.raises(ValidationError):
+        AIStatementResult(
+            statement_id="STATEMENT_001",
+            statement_type="observation",
+            section="comparisons",
+            text="Invalid section",
+            support_status="supported",
+        )
+    with pytest.raises(ValidationError):
+        AIStatementResult(
+            statement_id="STATEMENT_001",
             statement_type="unsupported",
+            section="pricing",
             text="Invalid",
             support_status="supported",
         )
@@ -410,6 +430,7 @@ def test_invalid_statement_values_are_rejected_by_contract():
         AIStatementResult(
             statement_id="STATEMENT_001",
             statement_type="observation",
+            section="pricing",
             text="Invalid",
             support_status="unsupported",
         )
@@ -426,6 +447,7 @@ def test_provider_contract_requires_context_ids_not_database_ids():
     statement = AIStatementResult(
         statement_id="STATEMENT_001",
         statement_type="evidence_gap",
+        section="key_findings",
         text="Evidence is insufficient.",
         support_status="insufficient_evidence",
     )
